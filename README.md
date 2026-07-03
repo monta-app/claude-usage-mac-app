@@ -2,9 +2,7 @@
 
 A tiny macOS menu-bar app that shows your **Claude Code plan usage** — one line per Max/Pro account, right next to the clock. Optionally shows your extra-usage **spend on top of the plan**.
 
-<img width="360" alt="menu bar dropdown" src="docs/screenshot.png">
-
-*(Menu bar shows e.g. `56% · 40%` — each account's highest limit; ⚠︎ appears at 100%.)*
+The menu bar shows each account's highest limit, e.g. `56% · 40%` (⚠︎ at 100%). See **[INSTALL.md](INSTALL.md)** for the quick start.
 
 ---
 
