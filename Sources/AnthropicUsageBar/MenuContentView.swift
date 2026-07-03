@@ -3,12 +3,16 @@ import AppKit
 
 struct MenuContentView: View {
     @EnvironmentObject var store: AccountStore
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            active
+            ForEach(Array(store.accounts.enumerated()), id: \.element.id) { idx, acct in
+                if idx > 0 { Divider() }
+                card(acct)
+            }
             Divider()
             footer
         }
@@ -28,19 +32,25 @@ struct MenuContentView: View {
         .padding(12)
     }
 
-    private var active: some View {
+    private func card(_ acct: ConfigAccount) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "person.crop.circle.fill").font(.caption).foregroundStyle(.tint)
-                Text(store.activeLabel).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Image(systemName: acct.configDir == nil ? "person.crop.circle.fill" : "person.crop.circle")
+                    .font(.caption).foregroundStyle(acct.configDir == nil ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(store.title(for: acct)).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    if let email = store.identities[acct.id]?.email, !email.isEmpty {
+                        Text(email).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
                 Spacer()
-                if let p = store.peak(of: store.claudeCode) {
+                if let p = store.peak(of: acct.id) {
                     Text("\(Int((p * 100).rounded()))%")
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(p >= 1 ? .red : (p >= 0.8 ? .orange : .green))
                 }
             }
-            planBlock(state: store.claudeCode)
+            planBlock(state: store.states[acct.id] ?? .loading)
         }
         .padding(12)
     }
@@ -53,10 +63,10 @@ struct MenuContentView: View {
         case .cliMissing:
             Text("Claude Code CLI not found.").font(.caption).foregroundStyle(.secondary)
         case .notLoggedIn:
-            Text("Not logged into Claude Code. Click Switch account to log in.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text("Not logged in — use Manage… to log in.").font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         case .expired:
-            Label("Login expired — click Switch account to log in.", systemImage: "clock.arrow.circlepath")
+            Label("Login expired — log in again in Manage…", systemImage: "clock.arrow.circlepath")
                 .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
         case .rateLimited:
             Label("Throttled — will retry.", systemImage: "hourglass").font(.caption).foregroundStyle(.secondary)
@@ -86,9 +96,10 @@ struct MenuContentView: View {
 
     private var footer: some View {
         HStack {
-            Button("Switch account…") { store.switchAccount() }.buttonStyle(.borderless)
+            Text("Updated \(Format.relative(store.lastUpdated))").font(.caption).foregroundStyle(.secondary)
             Spacer()
-            Text(Format.relative(store.lastUpdated)).font(.caption2).foregroundStyle(.secondary)
+            Button("Manage…") { NSApp.activate(ignoringOtherApps: true); openWindow(id: "manage") }
+                .buttonStyle(.borderless)
             Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.borderless)
         }
         .padding(12)

@@ -30,11 +30,19 @@ To install it into Applications: `cp -R "Claude Usage.app" /Applications/`.
 
 ---
 
-## Switch accounts
+## Multiple accounts (both logged in at once)
 
-Click **Switch account…** in the dropdown → a Terminal runs `claude /login`. Log in as whichever account you want; Claude Code, Conductor, and this app all use it. The app itself **never touches your Keychain or login** — it only reads usage and opens the official login when you ask.
+See usage for several Claude accounts simultaneously — safely, with no Keychain access.
+
+1. **Manage… → Add another account** → name it.
+2. Click **Log in** on it → a Terminal runs `claude /login` in that account's own config dir → sign in as that account.
+3. Both accounts now show in the dropdown, each with its own bars; the menu bar shows both peaks (e.g. `56% · 40%`).
+
+Each extra account lives in its own `CLAUDE_CONFIG_DIR`, so it's an independent login that **never touches your Default login or the Keychain**. Your **Default** account is the one Claude Code and Conductor use.
+
+**To make Claude Code / Conductor use an extra account** in a given terminal or Conductor session, set its `CLAUDE_CONFIG_DIR` to that account's dir (shown by the app). The Default account needs no env var.
 
 ## How it works
 
-Reads plan limits via `claude -p "/usage"` and the account name via `claude auth status`. No Keychain access, no stored tokens, no background account manipulation. Refresh every 5 min or ↻.
+Reads plan limits via `claude -p "/usage"` (per config dir) and the account name via `claude auth status`. The app only reads usage and opens the official `claude /login` — it never touches the Keychain, stores no tokens, and never modifies a login. Refresh every 5 min or ↻.
 
