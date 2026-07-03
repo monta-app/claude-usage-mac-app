@@ -10,6 +10,8 @@ final class AccountStore: ObservableObject {
     /// Additional Claude Code logins, each in its own config dir.
     @Published var ccAccounts: [CCAccount] = []
     @Published var ccStates: [UUID: ClaudeCode.State] = [:]
+    /// The real logged-in account (email / org) per account, from the CLI.
+    @Published var identities: [UUID: ClaudeCode.Identity] = [:]
     /// Per-account per-member Claude Code spend (month-to-date, USD).
     @Published var spend: [UUID: ClaudeCodeSpend.Result] = [:]
     /// Member email per account (Primary keyed by primaryTokenID).
@@ -183,6 +185,22 @@ final class AccountStore: ObservableObject {
             for await (id, state) in group { ccStates[id] = merge(new: state, old: ccStates[id]) }
         }
         claudeCode = merge(new: await primary, old: claudeCode)
+        await refreshIdentities()
+    }
+
+    /// Resolve each account's real logged-in email/org via `claude auth status`.
+    func refreshIdentities() async {
+        let items: [(UUID, String?, String?)] =
+            [(Self.primaryTokenID, ccToken(for: Self.primaryTokenID), nil)] +
+            ccAccounts.map { ($0.id, ccToken(for: $0.id), $0.configDir) }
+        await withTaskGroup(of: (UUID, ClaudeCode.Identity?).self) { group in
+            for (id, token, dir) in items {
+                group.addTask { (id, await ClaudeCode.fetchIdentity(configDir: dir, token: token)) }
+            }
+            for await (id, ident) in group {
+                if let ident { identities[id] = ident }
+            }
+        }
     }
 
     func refreshSpend() async {

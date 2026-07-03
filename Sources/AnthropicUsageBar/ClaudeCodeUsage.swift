@@ -91,6 +91,42 @@ enum ClaudeCode {
 
     // MARK: Public
 
+    struct Identity: Equatable {
+        var email: String?
+        var orgName: String?
+        /// Best label for display: email, else org name.
+        var label: String? { email ?? orgName }
+    }
+
+    /// The logged-in account identity for a given auth context, via
+    /// `claude auth status --json`. Same auth resolution as usage: a token
+    /// wins; otherwise the config dir (nil = default ~/.claude login).
+    static func fetchIdentity(configDir: String?, token: String?) async -> Identity? {
+        await Task.detached(priority: .utility) { blockingIdentity(configDir: configDir, token: token) }.value
+    }
+
+    private static func blockingIdentity(configDir: String?, token: String?) -> Identity? {
+        guard let bin = resolveClaude() else { return nil }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: bin)
+        task.arguments = ["auth", "status", "--json"]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        if let token { env["CLAUDE_CODE_OAUTH_TOKEN"] = token }
+        else if let configDir { env["CLAUDE_CONFIG_DIR"] = configDir }
+        task.environment = env
+        task.currentDirectoryURL = URL(fileURLWithPath: neutralWorkdir())
+        let out = Pipe(); task.standardOutput = out; task.standardError = Pipe()
+        do { try task.run() } catch { return nil }
+        let deadline = DispatchTime.now() + 20
+        let killer = DispatchWorkItem { if task.isRunning { task.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: deadline, execute: killer)
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit(); killer.cancel()
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return Identity(email: root["email"] as? String, orgName: root["orgName"] as? String)
+    }
+
     /// Fetch limits for a specific login. `configDir == nil` uses the default
     /// (`~/.claude`) — your primary Claude Code login. A path selects an
     /// independent login via `CLAUDE_CONFIG_DIR`.

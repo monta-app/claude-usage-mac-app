@@ -108,7 +108,12 @@ struct ClaudeCodeSection: View {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(name).font(.subheadline.weight(.semibold))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(name).font(.subheadline.weight(.semibold))
+                    if let label = store.identities[id]?.label {
+                        Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
                 Spacer()
                 if let p = store.peak(of: state) {
                     Text("\(Int((p * 100).rounded()))%")
