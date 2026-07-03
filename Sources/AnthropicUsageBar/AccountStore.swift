@@ -141,6 +141,24 @@ final class AccountStore: ObservableObject {
         return nil
     }
 
+    func state(for id: UUID) -> ClaudeCode.State {
+        id == Self.primaryTokenID ? claudeCode : (ccStates[id] ?? .loading)
+    }
+
+    /// Short connection status for the Manage window: (text, isGood).
+    func status(for id: UUID) -> (String, Bool) {
+        switch state(for: id) {
+        case .ok: return ("Connected", true)
+        case .loading: return ("Checking…", false)
+        case .notLoggedIn: return ("Not connected — add a token below", false)
+        case .expired: return ("Token rejected — paste a fresh one", false)
+        case .rateLimited: return ("Connected (throttled)", true)
+        case .cliMissing: return ("Claude Code CLI not found", false)
+        case .stats: return ("Connected", true)
+        case .error(let m): return (m, false)
+        }
+    }
+
     /// Card title: the org name from the CLI, else a sensible fallback.
     func title(for id: UUID) -> String {
         if let org = identities[id]?.orgName, !org.isEmpty { return org }

@@ -63,16 +63,16 @@ struct TokenControls: View {
                 }
             } else {
                 HStack {
-                    Button("Get token (opens Terminal)") { CCLogin.openSetupToken() }
+                    Button("1. Get token (opens Terminal)") { CCLogin.openSetupToken() }
                         .font(.caption)
                     if editing {
                         Button("Cancel") { editing = false; pasted = "" }.buttonStyle(.borderless).font(.caption)
                     }
                 }
                 HStack {
-                    SecureField("Paste long-lived token", text: $pasted)
+                    SecureField("2. Paste the token from Terminal", text: $pasted)
                         .textFieldStyle(.roundedBorder)
-                    Button("Save") { store.setCCToken(pasted, for: id); pasted = ""; editing = false }
+                    Button("3. Save") { store.setCCToken(pasted, for: id); pasted = ""; editing = false }
                         .disabled(pasted.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
@@ -91,10 +91,15 @@ private struct AccountRowShell<Trailing: View>: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: icon).foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(store.title(for: id)).font(.subheadline.weight(.medium))
                     if let email = store.identities[id]?.email, !email.isEmpty {
                         Text(email).font(.caption2).foregroundStyle(.secondary)
+                    }
+                    let (text, good) = store.status(for: id)
+                    HStack(spacing: 4) {
+                        Circle().fill(good ? Color.green : Color.orange).frame(width: 6, height: 6)
+                        Text(text).font(.caption2).foregroundStyle(good ? .green : .orange)
                     }
                 }
                 Spacer()
