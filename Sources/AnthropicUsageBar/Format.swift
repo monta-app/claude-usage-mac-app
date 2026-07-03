@@ -26,3 +26,7 @@ enum Format {
         return f.localizedString(for: date, relativeTo: Date())
     }
 }
+
+extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}

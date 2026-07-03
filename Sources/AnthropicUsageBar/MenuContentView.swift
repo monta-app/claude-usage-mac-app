@@ -110,8 +110,10 @@ struct ClaudeCodeSection: View {
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(name).font(.subheadline.weight(.semibold))
-                    if let label = store.identities[id]?.label {
-                        Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    if let ident = store.identities[id],
+                       let sub = [ident.orgName, ident.email].compactMap({ $0 })
+                                    .filter({ !$0.isEmpty }).joined(separator: " · ").nilIfEmpty {
+                        Text(sub).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
                 Spacer()
