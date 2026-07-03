@@ -29,12 +29,36 @@ enum CCLogin {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "claude"
     }
 
-    /// Opens Terminal running `claude /login` for a given config dir (nil =
-    /// default). The browser login writes only into that dir's own session —
-    /// it does not touch the Keychain or any other account. Uses a `.command`
-    /// file so no Automation permission is needed.
+    /// Opens Terminal, logs in, and **captures the login into this account's own
+    /// `.credentials.json` file** so the account becomes self-contained and
+    /// independent of the shared macOS Keychain. This is what lets two accounts
+    /// stay authenticated at once: each lives in its own file, not the one
+    /// shared keychain slot. Uses a `.command` file (no Automation permission).
+    /// For the default account (configDir == nil) it only logs in — no capture.
     static func openLogin(configDir: String?) {
         let claude = claudePath()
+        let capture: String
+        if let dir = configDir {
+            // After login, copy the freshly-written keychain token into this
+            // dir's file, then it reads from the file forever (independent).
+            capture = """
+            echo
+            echo "Saving this account so it stays separate…"
+            mkdir -p "\(dir)"
+            CRED=$(security find-generic-password -s "Claude Code-credentials" -a "$(id -un)" -w 2>/dev/null)
+            if [ -z "$CRED" ] && [ -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
+              CRED=$(cat "$CLAUDE_CONFIG_DIR/.credentials.json")
+            fi
+            if [ -n "$CRED" ]; then
+              printf '%s' "$CRED" > "\(dir)/.credentials.json"
+              echo "✅ Saved. This account is now independent."
+            else
+              echo "⚠️  Could not save the token — click Always Allow if a Keychain prompt appears, then re-run."
+            fi
+            """
+        } else {
+            capture = "echo\necho \"✅ Done — this is your default account.\""
+        }
         let exportLine = configDir.map { "export CLAUDE_CONFIG_DIR=\"\($0)\"" } ?? ""
         let which = configDir == nil
             ? "your DEFAULT account (used by Claude Code & Conductor)"
@@ -45,12 +69,13 @@ enum CCLogin {
         clear
         echo "════════════════════════════════════════════════"
         echo "  Log in to \(which)."
-        echo "  Approve in the browser, then close this window."
+        echo "  Approve in the browser."
         echo "════════════════════════════════════════════════"
         echo
         "\(claude)" /login
+        \(capture)
         echo
-        echo "✅ Done — close this window. Claude Usage updates within a few minutes (or hit ↻)."
+        echo "Close this window. Claude Usage updates within a few minutes (or hit ↻)."
 
         """
         let url = FileManager.default.temporaryDirectory
