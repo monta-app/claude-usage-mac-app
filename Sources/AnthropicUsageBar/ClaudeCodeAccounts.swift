@@ -4,13 +4,12 @@ import AppKit
 /// An additional Claude Code login, isolated in its own config directory so it
 /// doesn't clash with your primary `~/.claude` login. `CLAUDE_CONFIG_DIR`
 /// points the CLI at this dir, giving a fully independent subscription session.
+/// An additional Claude Code login, isolated in its own config directory.
+/// It has no user-given name — the card shows the real account (org · email)
+/// read live from the CLI.
 struct CCAccount: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
-    var name: String
     var configDir: String
-    /// Member email used to filter the Claude Code Analytics API for this
-    /// account's per-member spend. Optional so older saved accounts decode.
-    var memberEmail: String? = nil
 }
 
 enum CCLogin {
@@ -33,7 +32,7 @@ enum CCLogin {
         echo "════════════════════════════════════════════════"
         echo "  Generating a long-lived Claude Code token."
         echo "  Approve in the browser, then COPY the token it"
-        echo "  prints and paste it into Anthropic Usage."
+        echo "  prints and paste it into Claude Usage."
         echo "  (This token does not expire — you only do this once.)"
         echo "════════════════════════════════════════════════"
         echo

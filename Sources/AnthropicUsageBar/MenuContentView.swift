@@ -24,7 +24,7 @@ struct MenuContentView: View {
 
     private var header: some View {
         HStack {
-            Text("Anthropic Usage")
+            Text("Claude Usage")
                 .font(.headline)
             Spacer()
             Button {
@@ -91,9 +91,9 @@ struct ClaudeCodeSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            accountCard(id: AccountStore.primaryTokenID, name: store.primaryName, state: store.claudeCode)
+            accountCard(id: AccountStore.primaryTokenID, state: store.claudeCode)
             ForEach(store.ccAccounts) { acct in
-                accountCard(id: acct.id, name: acct.name, state: store.ccStates[acct.id] ?? .loading)
+                accountCard(id: acct.id, state: store.ccStates[acct.id] ?? .loading)
             }
         }
         .padding(.top, 10)
@@ -102,18 +102,16 @@ struct ClaudeCodeSection: View {
     /// Each Claude Code account rendered as a distinct card: a titled header
     /// (account name + peak-usage badge) over its limit bars.
     @ViewBuilder
-    private func accountCard(id: UUID, name: String, state: ClaudeCode.State) -> some View {
+    private func accountCard(id: UUID, state: ClaudeCode.State) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(name).font(.subheadline.weight(.semibold))
-                    if let ident = store.identities[id],
-                       let sub = [ident.orgName, ident.email].compactMap({ $0 })
-                                    .filter({ !$0.isEmpty }).joined(separator: " · ").nilIfEmpty {
-                        Text(sub).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    Text(store.title(for: id)).font(.subheadline.weight(.semibold))
+                    if let email = store.identities[id]?.email, !email.isEmpty {
+                        Text(email).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
                 Spacer()
@@ -124,7 +122,6 @@ struct ClaudeCodeSection: View {
                 }
             }
             planBlock(state: state)
-            spendLine(id: id)
         }
         .padding(10)
         .background(
@@ -135,26 +132,6 @@ struct ClaudeCodeSection: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1)
         )
-    }
-
-    /// "Spend this month: $X" — per-member Claude Code cost (notional on Max).
-    @ViewBuilder
-    private func spendLine(id: UUID) -> some View {
-        switch store.spend[id] ?? .noConfig {
-        case .amount(let usd):
-            HStack {
-                Text("Spend this month").font(.caption2).foregroundStyle(.secondary)
-                Spacer()
-                Text(Format.usd(usd)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            .padding(.top, 2)
-        case .error(let msg):
-            Text(msg).font(.caption2).foregroundStyle(.orange).lineLimit(1)
-        case .loading:
-            Text("Spend: loading…").font(.caption2).foregroundStyle(.secondary)
-        case .noConfig:
-            EmptyView()   // no admin key / email set — silent
-        }
     }
 
     @ViewBuilder

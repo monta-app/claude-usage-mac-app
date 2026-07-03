@@ -4,6 +4,7 @@
 Package.resolved
 
 # Packaged app bundle (built locally via ./build-app.sh)
+Claude Usage.app/
 AnthropicUsageBar.app/
 *.app/
 
