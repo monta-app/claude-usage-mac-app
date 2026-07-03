@@ -62,6 +62,18 @@ final class AccountStore: ObservableObject {
 
     func login(_ account: ConfigAccount) { CCLogin.openLogin(configDir: account.configDir) }
 
+    /// Snapshot the current default login into this account's own file.
+    func captureCurrent(_ account: ConfigAccount) {
+        guard let dir = account.configDir else { return }
+        CCLogin.captureCurrent(configDir: dir)
+    }
+
+    /// True if this extra account has its own credential file (independent).
+    func isIndependent(_ account: ConfigAccount) -> Bool {
+        guard let dir = account.configDir else { return true }   // default is the keychain
+        return CredentialFile.exists(dir)
+    }
+
     func remove(_ account: ConfigAccount) {
         guard account.id != Self.defaultID else { return }   // can't remove default
         if let dir = account.configDir { try? FileManager.default.removeItem(atPath: dir) }
@@ -78,6 +90,8 @@ final class AccountStore: ObservableObject {
         await withTaskGroup(of: (UUID, ClaudeCode.State, ClaudeCode.Identity?).self) { group in
             for a in items {
                 group.addTask {
+                    // Keep a file-based account's token alive before reading it.
+                    if let dir = a.configDir { await CredentialFile.refreshIfNeeded(dir) }
                     async let u = ClaudeCode.fetchUsage(configDir: a.configDir)
                     async let i = ClaudeCode.fetchIdentity(configDir: a.configDir, token: nil)
                     return (a.id, await u, await i)

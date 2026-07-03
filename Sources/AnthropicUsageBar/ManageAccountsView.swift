@@ -59,6 +59,14 @@ private struct AccountRow: View {
                 }
             }
             Spacer()
+            if account.id != AccountStore.defaultID {
+                if !store.isIndependent(account) {
+                    Text("mirrors default").font(.caption2).foregroundStyle(.orange)
+                }
+                Button("Use current login") { store.captureCurrent(account) }
+                    .buttonStyle(.borderless).font(.caption)
+                    .help("Snapshot whatever you're logged into right now as this account")
+            }
             Button("Log in") { store.login(account) }.buttonStyle(.borderless).font(.caption)
             if account.id != AccountStore.defaultID {
                 Button(role: .destructive) { store.remove(account) } label: { Image(systemName: "trash") }
