@@ -28,12 +28,9 @@ cp -R "Claude Usage.app" /Applications/
 
 ---
 
-## Switch between accounts
-1. **Manage… → Log in…** → log in to an account.
-2. Click **Add current login** to register it. Repeat for each account.
-3. Click an account in the dropdown to swap — Claude Code, Conductor, etc. all follow.
+## Switch accounts
+Dropdown → **Switch account…** → log in as the account you want. Claude Code, Conductor, and the app all follow it.
 
----
 
 ## First-launch prompts
 - **"Always Allow"** on the Keychain prompt, and **Allow** on any file-access prompt.

@@ -1,13 +1,6 @@
 import Foundation
 import AppKit
 
-/// A registered Claude Code account. Its login snapshot lives in the Keychain
-/// (keyed by `id`); `label` is captured from the CLI at save time for display.
-struct SwitchAccount: Identifiable, Codable, Equatable {
-    var id: UUID = UUID()
-    var label: String
-}
-
 enum CCLogin {
     private static func claudePath() -> String {
         let candidates = [
@@ -18,23 +11,23 @@ enum CCLogin {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "claude"
     }
 
-    /// Opens Terminal running `claude /login` (default login). Used to sign in
-    /// to an account so it can then be registered/snapshotted by the app.
-    /// Uses a `.command` file so no Automation permission is needed.
+    /// Opens Terminal running `claude /login` so the user can switch which
+    /// account Claude Code (and Conductor, etc.) use. Uses a `.command` file so
+    /// no Automation permission is needed. The app never touches credentials.
     static func openLogin() {
         let claude = claudePath()
         let script = """
         #!/bin/bash
         clear
         echo "════════════════════════════════════════════════"
-        echo "  Log in to the Claude account you want to add."
-        echo "  Approve in the browser, then come back to"
-        echo "  Claude Usage and click \\"Add current login\\"."
+        echo "  Log in to the Claude account you want to use."
+        echo "  Claude Code, Conductor, and this app will all"
+        echo "  use whichever account you pick here."
         echo "════════════════════════════════════════════════"
         echo
         "\(claude)" /login
         echo
-        echo "✅ Logged in. Return to Claude Usage → Add current login."
+        echo "✅ Done — close this window. Claude Usage updates within a few minutes (or hit ↻)."
 
         """
         let url = FileManager.default.temporaryDirectory

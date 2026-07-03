@@ -30,18 +30,11 @@ To install it into Applications: `cp -R "Claude Usage.app" /Applications/`.
 
 ---
 
-## Switch between accounts
+## Switch accounts
 
-The app registers each Claude account and lets you **swap the active login with one click** — so Claude Code, Conductor, and anything else using your Claude login all use the account you pick.
+Click **Switch account…** in the dropdown → a Terminal runs `claude /login`. Log in as whichever account you want; Claude Code, Conductor, and this app all use it. The app itself **never touches your Keychain or login** — it only reads usage and opens the official login when you ask.
 
-1. **Manage… → Log in…** → log in to an account in the browser.
-2. Click **Add current login** to register it.
-3. Repeat for your other account(s).
-4. Then just click an account in the menu-bar dropdown (or **Switch to** in Manage) to swap. The menu bar shows the **active** account's plan usage.
+## How it works
 
-It works by snapshotting each account's Claude Code login and restoring it on swap (all local, in the macOS Keychain). Only one account is active at a time — which is all any tool can use anyway. First read/write of the login triggers a Keychain prompt: **Always Allow**.
-
-## How it works (short version)
-
-Plan limits come from `claude -p "/usage"`; the account label from `claude auth status`. Switching writes a saved login snapshot into Claude Code's Keychain item (`Claude Code-credentials`). Everything is local; the app only reads usage — it never runs billable requests. Refresh: every 5 min, or ↻.
+Reads plan limits via `claude -p "/usage"` and the account name via `claude auth status`. No Keychain access, no stored tokens, no background account manipulation. Refresh every 5 min or ↻.
 

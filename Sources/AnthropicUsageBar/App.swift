@@ -14,13 +14,6 @@ struct AnthropicUsageBarApp: App {
             Text(store.menuBarTitle)
         }
         .menuBarExtraStyle(.window)
-
-        Window("Manage Accounts", id: "manage") {
-            ManageAccountsView()
-                .environmentObject(store)
-                .frame(width: 480, height: 640)
-        }
-        .windowResizability(.contentSize)
     }
 }
 
