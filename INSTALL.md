@@ -28,11 +28,10 @@ cp -R "Claude Usage.app" /Applications/
 
 ---
 
-## Add a second Max/Pro plan
-1. Menu bar item → **Manage…** → **Add a plan**.
-2. On the new plan → **Get token** → a Terminal runs `claude setup-token` → log in to *that* account → copy the printed token → paste it into the app.
-
-The token is long-lived — you do this once per account.
+## Switch between accounts
+1. **Manage… → Log in…** → log in to an account.
+2. Click **Add current login** to register it. Repeat for each account.
+3. Click an account in the dropdown to swap — Claude Code, Conductor, etc. all follow.
 
 ---
 

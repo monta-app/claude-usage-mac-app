@@ -30,43 +30,18 @@ To install it into Applications: `cp -R "Claude Usage.app" /Applications/`.
 
 ---
 
-## Add a second plan
+## Switch between accounts
 
-Different Max/Pro accounts live in different orgs, so each logs in separately.
+The app registers each Claude account and lets you **swap the active login with one click** — so Claude Code, Conductor, and anything else using your Claude login all use the account you pick.
 
-1. Click the menu bar item → **Manage…** → **Add a plan**.
-2. On the new plan, click **Get token** → a Terminal window runs `claude setup-token` → log in to *that* account in the browser → **copy the token it prints** → paste it back in the app.
+1. **Manage… → Log in…** → log in to an account in the browser.
+2. Click **Add current login** to register it.
+3. Repeat for your other account(s).
+4. Then just click an account in the menu-bar dropdown (or **Switch to** in Manage) to swap. The menu bar shows the **active** account's plan usage.
 
-That token is **long-lived** (it doesn't expire), so you do this only once per account — no repeated logins. Each plan is labelled automatically with its real account (**org · email**) read from the CLI — no manual naming.
-
----
+It works by snapshotting each account's Claude Code login and restoring it on swap (all local, in the macOS Keychain). Only one account is active at a time — which is all any tool can use anyway. First read/write of the login triggers a Keychain prompt: **Always Allow**.
 
 ## How it works (short version)
 
-Plan limits come from the CLI's own `claude -p "/usage"`; the account label comes from `claude auth status`. No setup for your primary account; a long-lived token per extra account. Tokens live in the macOS **Keychain**; the app only **reads** usage — it never runs billable requests. Refresh: every 5 min, or the ↻ button anytime.
+Plan limits come from `claude -p "/usage"`; the account label from `claude auth status`. Switching writes a saved login snapshot into Claude Code's Keychain item (`Claude Code-credentials`). Everything is local; the app only reads usage — it never runs billable requests. Refresh: every 5 min, or ↻.
 
----
-
-## Stop the repeated permission prompts
-
-Because the app is signed **ad-hoc** by default, macOS re-asks for Keychain/file access after every rebuild. To make "Always Allow" stick, create a one-time self-signed certificate:
-
-- **Keychain Access → Certificate Assistant → Create a Certificate…**
-- Name: `Claude Usage` · Identity Type: **Self Signed Root** · Type: **Code Signing**
-
-`./build-app.sh` auto-detects it and signs with it from then on.
-
----
-
-## Project layout
-
-| File | Purpose |
-|---|---|
-| `App.swift` | `MenuBarExtra` + Manage window |
-| `MenuContentView.swift` | Dropdown UI (account cards, bars) |
-| `ManageAccountsView.swift` | Add plan / token controls |
-| `AccountStore.swift` | State, persistence, refresh loops |
-| `ClaudeCodeUsage.swift` | Plan limits + account identity via CLI |
-| `ClaudeCodeAccounts.swift` | Account model + Terminal login helpers |
-| `Keychain.swift` | Token / key storage |
-| `build-app.sh` | Builds the `.app` bundle |

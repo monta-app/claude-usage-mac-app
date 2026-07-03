@@ -3,135 +3,134 @@ import SwiftUI
 
 @MainActor
 final class AccountStore: ObservableObject {
-    /// Primary Claude Code login (default ~/.claude config dir).
+    /// Registered accounts (login snapshots live in the Keychain).
+    @Published var accounts: [SwitchAccount] = []
+    /// Which account's login is currently active (in the live Claude Code slot).
+    @Published var activeID: UUID?
+    /// Plan usage of the currently-active login.
     @Published var claudeCode: ClaudeCode.State = .loading
-    /// Additional Claude Code logins, each in its own config dir.
-    @Published var ccAccounts: [CCAccount] = []
-    @Published var ccStates: [UUID: ClaudeCode.State] = [:]
-    /// The real logged-in account (email / org) per account, from the CLI.
-    @Published var identities: [UUID: ClaudeCode.Identity] = [:]
+    /// Live identity of the active login (org / email).
+    @Published var activeIdentity: ClaudeCode.Identity?
     @Published var lastUpdated: Date?
     @Published var isRefreshing = false
+    @Published var status: String?   // transient user-facing message
 
-    /// Fixed id for the Primary account's optional token.
-    static let primaryTokenID = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
-
-    private let ccKey = "ccAccounts.v2"
-    private var ccTimer: Timer?
+    private let accountsKey = "switchAccounts.v1"
+    private let activeKey = "activeAccountID.v1"
+    private var timer: Timer?
 
     init() {
         load()
-        // Plan limits every 5 min (token accounts hit a rate-limited endpoint).
-        ccTimer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in
-            Task { await self?.refreshClaudeCode() }
+        timer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in
+            Task { await self?.refresh() }
         }
-        Task { await refreshAll() }
+        Task { await refresh() }
     }
 
     // MARK: Persistence
 
     private func load() {
-        if let data = UserDefaults.standard.data(forKey: ccKey),
-           let decoded = try? JSONDecoder().decode([CCAccount].self, from: data) {
-            ccAccounts = decoded
+        if let data = UserDefaults.standard.data(forKey: accountsKey),
+           let decoded = try? JSONDecoder().decode([SwitchAccount].self, from: data) {
+            accounts = decoded
         }
+        if let s = UserDefaults.standard.string(forKey: activeKey) { activeID = UUID(uuidString: s) }
     }
 
     private func persist() {
-        if let data = try? JSONEncoder().encode(ccAccounts) {
-            UserDefaults.standard.set(data, forKey: ccKey)
+        if let data = try? JSONEncoder().encode(accounts) {
+            UserDefaults.standard.set(data, forKey: accountsKey)
         }
+        UserDefaults.standard.set(activeID?.uuidString, forKey: activeKey)
     }
 
-    // MARK: Accounts
+    // MARK: Registering & swapping accounts
 
-    func loginPrimary() { CCLogin.openLogin(configDir: nil) }
+    /// Snapshot the current live login as a new registered account.
+    func addCurrentLogin() async {
+        guard let (_, data) = ClaudeCredential.read() else {
+            status = "Couldn't read the current Claude Code login. Log in first."
+            return
+        }
+        guard ClaudeCredential.isValid(data) else {
+            status = "The current login isn't a subscription login."
+            return
+        }
+        // Label from the live identity.
+        let ident = await ClaudeCode.fetchIdentity(configDir: nil, token: nil)
+        let label = [ident?.orgName, ident?.email].compactMap { $0 }
+            .filter { !$0.isEmpty }.joined(separator: " · ").nilIfEmpty ?? "Account \(accounts.count + 1)"
 
-    func addCCAccount() {
-        let id = UUID()
-        let dir = CCLogin.newConfigDir(for: id)
-        ccAccounts.append(CCAccount(id: id, configDir: dir))
+        // If this identity is already registered, update its snapshot instead of duplicating.
+        let acct: SwitchAccount
+        if let existing = accounts.first(where: { $0.label == label }) {
+            acct = existing
+        } else {
+            acct = SwitchAccount(label: label)
+            accounts.append(acct)
+        }
+        Keychain.save(key: String(data: data, encoding: .utf8) ?? "", for: acct.id)
+        activeID = acct.id
+        persist()
+        status = "Added \(label)."
+        await refresh()
+    }
+
+    /// Swap the live login to `account`'s saved snapshot. Re-snapshots the
+    /// currently-active account first so its latest (refreshed) token is kept.
+    func swap(to account: SwitchAccount) async {
+        // 1. Preserve the active account's current credential.
+        if let activeID, activeID != account.id,
+           let (_, data) = ClaudeCredential.read(), ClaudeCredential.isValid(data) {
+            Keychain.save(key: String(data: data, encoding: .utf8) ?? "", for: activeID)
+        }
+        // 2. Restore the target's snapshot into the live login slot.
+        guard let snap = Keychain.load(for: account.id),
+              let data = snap.data(using: .utf8), ClaudeCredential.isValid(data) else {
+            status = "No saved login for \(account.label) — re-add it."
+            return
+        }
+        guard ClaudeCredential.write(data) else {
+            status = "Couldn't write the login (Keychain permission?). Try again and Always Allow."
+            return
+        }
+        activeID = account.id
+        persist()
+        status = "Switched to \(account.label)."
+        await refresh()
+    }
+
+    func remove(_ account: SwitchAccount) {
+        Keychain.delete(for: account.id)
+        accounts.removeAll { $0.id == account.id }
+        if activeID == account.id { activeID = nil }
         persist()
     }
 
-    func removeCCAccount(_ account: CCAccount) {
-        ccAccounts.removeAll { $0.id == account.id }
-        ccStates[account.id] = nil; identities[account.id] = nil
-        ccTokenCache[account.id] = nil
-        try? FileManager.default.removeItem(atPath: account.configDir)
-        persist()
-    }
+    func openLogin() { CCLogin.openLogin() }
 
-    // MARK: Long-lived tokens
+    // MARK: Refresh (active login only)
 
-    private var ccTokenCache: [UUID: String] = [:]
-    func ccToken(for id: UUID) -> String? {
-        if let c = ccTokenCache[id] { return c }
-        guard let t = Keychain.load(for: id, service: Keychain.ccService) else { return nil }
-        ccTokenCache[id] = t
-        return t
-    }
-    func hasToken(for id: UUID) -> Bool { ccToken(for: id) != nil }
-    func setCCToken(_ token: String, for id: UUID) {
-        let t = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
-        Keychain.save(key: t, for: id, service: Keychain.ccService)
-        ccTokenCache[id] = t
-        Task { await refreshClaudeCode() }
-    }
-    func clearCCToken(for id: UUID) {
-        Keychain.delete(for: id, service: Keychain.ccService)
-        ccTokenCache[id] = nil
-        Task { await refreshClaudeCode() }
-    }
-
-    // MARK: Refresh
-
-    func refreshAll() async {
+    func refresh() async {
         isRefreshing = true
-        await refreshClaudeCode()
+        async let usage = ClaudeCode.fetchUsage(configDir: nil)
+        async let ident = ClaudeCode.fetchIdentity(configDir: nil, token: nil)
+        claudeCode = await usage
+        activeIdentity = await ident
+        reconcileActive()
         lastUpdated = Date()
         isRefreshing = false
     }
 
-    func refreshClaudeCode() async {
-        let primaryToken = ccToken(for: Self.primaryTokenID)
-        async let primary: ClaudeCode.State = {
-            if let t = primaryToken { return await ClaudeCode.fetchViaToken(t) }
-            return await ClaudeCode.fetchUsage(configDir: nil)
-        }()
-        let extras: [(UUID, String?, String)] = ccAccounts.map { ($0.id, ccToken(for: $0.id), $0.configDir) }
-        await withTaskGroup(of: (UUID, ClaudeCode.State).self) { group in
-            for (id, token, dir) in extras {
-                group.addTask {
-                    if let token { return (id, await ClaudeCode.fetchViaToken(token)) }
-                    return (id, await ClaudeCode.fetchUsage(configDir: dir))
-                }
-            }
-            for await (id, state) in group { ccStates[id] = merge(new: state, old: ccStates[id]) }
+    /// If the live login's identity matches a registered account, mark it active
+    /// (covers logins changed outside the app, e.g. via `claude /login`).
+    private func reconcileActive() {
+        guard let ident = activeIdentity else { return }
+        let label = [ident.orgName, ident.email].compactMap { $0 }
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+        if let match = accounts.first(where: { $0.label == label }) {
+            if activeID != match.id { activeID = match.id; persist() }
         }
-        claudeCode = merge(new: await primary, old: claudeCode)
-        await refreshIdentities()
-    }
-
-    /// Resolve each account's real logged-in email/org via `claude auth status`.
-    func refreshIdentities() async {
-        let items: [(UUID, String?, String?)] =
-            [(Self.primaryTokenID, ccToken(for: Self.primaryTokenID), nil)] +
-            ccAccounts.map { ($0.id, ccToken(for: $0.id), $0.configDir) }
-        await withTaskGroup(of: (UUID, ClaudeCode.Identity?).self) { group in
-            for (id, token, dir) in items {
-                group.addTask { (id, await ClaudeCode.fetchIdentity(configDir: dir, token: token)) }
-            }
-            for await (id, ident) in group {
-                if let ident { identities[id] = ident }
-            }
-        }
-    }
-
-    private func merge(new: ClaudeCode.State, old: ClaudeCode.State?) -> ClaudeCode.State {
-        if case .rateLimited = new, let old, case .ok = old { return old }
-        return new
     }
 
     // MARK: Derived
@@ -141,43 +140,17 @@ final class AccountStore: ObservableObject {
         return nil
     }
 
-    func state(for id: UUID) -> ClaudeCode.State {
-        id == Self.primaryTokenID ? claudeCode : (ccStates[id] ?? .loading)
-    }
-
-    /// Short connection status for the Manage window: (text, isGood).
-    func status(for id: UUID) -> (String, Bool) {
-        switch state(for: id) {
-        case .ok: return ("Connected", true)
-        case .loading: return ("Checking…", false)
-        case .notLoggedIn: return ("Not connected — add a token below", false)
-        case .expired: return ("Token rejected — paste a fresh one", false)
-        case .rateLimited: return ("Connected (throttled)", true)
-        case .cliMissing: return ("Claude Code CLI not found", false)
-        case .stats: return ("Connected", true)
-        case .error(let m): return (m, false)
-        }
-    }
-
-    /// Card title: the org name from the CLI, else a sensible fallback.
-    func title(for id: UUID) -> String {
-        if let org = identities[id]?.orgName, !org.isEmpty { return org }
-        if id == Self.primaryTokenID { return "Primary" }
-        return "New plan"
+    var activeLabel: String {
+        if let id = activeID, let a = accounts.first(where: { $0.id == id }) { return a.label }
+        let ident = activeIdentity
+        return [ident?.orgName, ident?.email].compactMap { $0 }
+            .filter { !$0.isEmpty }.joined(separator: " · ").nilIfEmpty ?? "Claude Code"
     }
 
     var menuBarTitle: String {
-        var parts: [String] = []
-        var anyMaxed = false
-        for state in [claudeCode] + ccAccounts.map({ ccStates[$0.id] ?? .loading }) {
-            if let p = peak(of: state) {
-                if p >= 1 { anyMaxed = true }
-                parts.append("\(Int((p * 100).rounded()))%")
-            }
-        }
-        if !parts.isEmpty {
-            let joined = parts.joined(separator: " · ")
-            return anyMaxed ? "⚠︎ \(joined)" : joined
+        if let p = peak(of: claudeCode) {
+            let pct = "\(Int((p * 100).rounded()))%"
+            return p >= 1 ? "⚠︎ \(pct)" : pct
         }
         if case .loading = claudeCode { return "…" }
         return "Claude"

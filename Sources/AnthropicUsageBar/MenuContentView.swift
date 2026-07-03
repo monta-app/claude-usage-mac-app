@@ -8,168 +8,95 @@ struct MenuContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-
-            SectionHeader(icon: "gauge.with.needle",
-                          title: "Claude Code Plans",
-                          subtitle: "Subscription limits · no overage charge")
-            ClaudeCodeSection()
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
-
+            Divider()
+            activeSection
+            if store.accounts.count > 1 || (store.accounts.count == 1 && store.activeID == nil) {
+                Divider()
+                swapSection
+            }
             Divider()
             footer
         }
-        .frame(width: 340)
+        .frame(width: 320)
     }
 
     private var header: some View {
         HStack {
-            Text("Claude Usage")
-                .font(.headline)
+            Text("Claude Usage").font(.headline)
             Spacer()
-            Button {
-                Task { await store.refreshAll() }
-            } label: {
-                if store.isRefreshing {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                }
+            Button { Task { await store.refresh() } } label: {
+                if store.isRefreshing { ProgressView().controlSize(.small) }
+                else { Image(systemName: "arrow.clockwise") }
             }
-            .buttonStyle(.borderless)
-            .help("Refresh now")
+            .buttonStyle(.borderless).help("Refresh now")
         }
         .padding(12)
     }
 
-    private var footer: some View {
-        HStack {
-            Text("Updated \(Format.relative(store.lastUpdated))")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Button("Manage…") { openManage() }
-                .buttonStyle(.borderless)
-            Button("Quit") { NSApp.terminate(nil) }
-                .buttonStyle(.borderless)
-        }
-        .padding(12)
-    }
-
-    private func openManage() {
-        NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: "manage")
-    }
-}
-
-/// A distinct, tinted header used to separate the two major sections.
-struct SectionHeader: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.subheadline.weight(.semibold))
-                Text(subtitle).font(.caption2).foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06))
-    }
-}
-
-struct ClaudeCodeSection: View {
-    @EnvironmentObject var store: AccountStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            accountCard(id: AccountStore.primaryTokenID, state: store.claudeCode)
-            ForEach(store.ccAccounts) { acct in
-                accountCard(id: acct.id, state: store.ccStates[acct.id] ?? .loading)
-            }
-        }
-        .padding(.top, 10)
-    }
-
-    /// Each Claude Code account rendered as a distinct card: a titled header
-    /// (account name + peak-usage badge) over its limit bars.
-    @ViewBuilder
-    private func accountCard(id: UUID, state: ClaudeCode.State) -> some View {
+    // Active account + its plan bars.
+    private var activeSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(store.title(for: id)).font(.subheadline.weight(.semibold))
-                    if let email = store.identities[id]?.email, !email.isEmpty {
-                        Text(email).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    }
-                }
+                Image(systemName: "person.crop.circle.fill").font(.caption).foregroundStyle(.tint)
+                Text(store.activeLabel).font(.subheadline.weight(.semibold)).lineLimit(1)
                 Spacer()
-                if let p = store.peak(of: state) {
+                if let p = store.peak(of: store.claudeCode) {
                     Text("\(Int((p * 100).rounded()))%")
                         .font(.caption.weight(.semibold).monospacedDigit())
                         .foregroundStyle(p >= 1 ? .red : (p >= 0.8 ? .orange : .green))
                 }
             }
-            planBlock(state: state)
+            planBlock(state: store.claudeCode)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.secondary.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.secondary.opacity(0.15), lineWidth: 1)
-        )
+        .padding(12)
+    }
+
+    // Quick-swap: tap any registered account to make it active.
+    private var swapSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Switch account").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 12).padding(.top, 8)
+            ForEach(store.accounts) { acct in
+                Button {
+                    Task { await store.swap(to: acct) }
+                } label: {
+                    HStack {
+                        Image(systemName: acct.id == store.activeID ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(acct.id == store.activeID ? .green : .secondary)
+                        Text(acct.label).font(.callout).lineLimit(1)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                    .padding(.horizontal, 12).padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .disabled(acct.id == store.activeID)
+            }
+        }
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder
     private func planBlock(state: ClaudeCode.State) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            switch state {
-            case .loading:
-                HStack { ProgressView().controlSize(.small); Text("Checking…").font(.caption) }
-            case .cliMissing:
-                Text("Claude Code CLI not found.")
-                    .font(.caption).foregroundStyle(.secondary)
-            case .stats(let cost):
-                HStack {
-                    Text("Total cost").font(.caption)
-                    Spacer()
-                    Text(Format.usd(cost)).font(.caption.monospacedDigit())
-                }
-                Text("Token mode — no plan limits available. Log in for limit bars.")
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            case .notLoggedIn:
-                Text("Not logged in — use Manage… to log in.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            case .expired:
-                Label("Token rejected — paste a fresh token in Manage…",
-                      systemImage: "key.slash")
-                    .font(.caption).foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            case .rateLimited:
-                Label("Throttled — will retry.", systemImage: "hourglass")
-                    .font(.caption).foregroundStyle(.secondary)
-            case .error(let msg):
-                Label(msg, systemImage: "exclamationmark.triangle")
-                    .font(.caption).foregroundStyle(.red).lineLimit(2)
-            case .ok(let windows):
-                ForEach(windows) { w in limitBar(w) }
-            }
+        switch state {
+        case .loading:
+            HStack { ProgressView().controlSize(.small); Text("Checking…").font(.caption) }
+        case .cliMissing:
+            Text("Claude Code CLI not found.").font(.caption).foregroundStyle(.secondary)
+        case .notLoggedIn:
+            Text("Not logged into Claude Code. Use Manage… to log in.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        case .expired:
+            Label("Login expired — re-login in Manage…", systemImage: "clock.arrow.circlepath")
+                .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+        case .rateLimited:
+            Label("Throttled — will retry.", systemImage: "hourglass").font(.caption).foregroundStyle(.secondary)
+        case .stats:
+            Text("No plan limits for this login.").font(.caption).foregroundStyle(.secondary)
+        case .error(let m):
+            Label(m, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red).lineLimit(2)
+        case .ok(let windows):
+            ForEach(windows) { w in limitBar(w) }
         }
     }
 
@@ -180,16 +107,33 @@ struct ClaudeCodeSection: View {
                 Text(w.label).font(.caption)
                 Spacer()
                 Text(String(format: "%.0f%%", w.fraction * 100))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(color)
+                    .font(.caption.monospacedDigit()).foregroundStyle(color)
             }
             ProgressView(value: w.fraction).tint(color)
             if let reset = w.resetText {
-                Text("resets \(reset)")
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .lineLimit(1)
+                Text("resets \(reset)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
         }
     }
-}
 
+    private var footer: some View {
+        VStack(spacing: 0) {
+            if let s = store.status {
+                Text(s).font(.caption2).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.top, 6)
+            }
+            HStack {
+                Text("Updated \(Format.relative(store.lastUpdated))").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Manage…") { openManage() }.buttonStyle(.borderless)
+                Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.borderless)
+            }
+            .padding(12)
+        }
+    }
+
+    private func openManage() {
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "manage")
+    }
+}
