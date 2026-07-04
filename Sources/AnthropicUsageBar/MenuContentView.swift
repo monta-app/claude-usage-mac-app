@@ -9,9 +9,16 @@ struct MenuContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            ForEach(Array(store.accounts.enumerated()), id: \.element.id) { idx, acct in
-                if idx > 0 { Divider() }
-                card(acct)
+            if store.accounts.isEmpty {
+                Text("No accounts yet — open Manage… and click “Add current login”.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(12)
+            } else {
+                ForEach(Array(store.accounts.enumerated()), id: \.element.id) { idx, acct in
+                    if idx > 0 { Divider() }
+                    card(acct)
+                }
             }
             Divider()
             footer
@@ -35,8 +42,8 @@ struct MenuContentView: View {
     private func card(_ acct: ConfigAccount) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: acct.configDir == nil ? "person.crop.circle.fill" : "person.crop.circle")
-                    .font(.caption).foregroundStyle(acct.configDir == nil ? Color.accentColor : Color.secondary)
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.caption).foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 0) {
                     Text(store.title(for: acct)).font(.subheadline.weight(.semibold)).lineLimit(1)
                     if let email = store.identities[acct.id]?.email, !email.isEmpty {

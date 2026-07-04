@@ -1,24 +1,20 @@
 import Foundation
 import SwiftUI
 
-/// Shows plan usage for multiple Claude accounts at once. Each account is an
-/// independent Claude Code login living in its own config dir (the default
-/// account uses ~/.claude). The app only runs `claude` as a subprocess — it
-/// never touches the Keychain or modifies any login.
+/// Shows plan usage for multiple Claude accounts at once. Every account is
+/// file-based (its own `.credentials.json`), captured from a live login and
+/// refreshed by the app. The app never touches the macOS Keychain — so nothing
+/// mirrors, and switching Conductor/Claude Code doesn't change what's shown.
 @MainActor
 final class AccountStore: ObservableObject {
-    /// Default account (index 0) + extras. Always contains the default.
     @Published var accounts: [ConfigAccount] = []
     @Published var states: [UUID: ClaudeCode.State] = [:]
     @Published var identities: [UUID: ClaudeCode.Identity] = [:]
     @Published var lastUpdated: Date?
     @Published var isRefreshing = false
 
-    private let key = "configAccounts.v1"
+    private let key = "configAccounts.v2"
     private var timer: Timer?
-
-    /// Stable id for the default (~/.claude) account.
-    static let defaultID = UUID(uuidString: "00000000-0000-0000-0000-0000000000DE")!
 
     init() {
         load()
@@ -28,13 +24,23 @@ final class AccountStore: ObservableObject {
         Task { await refresh() }
     }
 
+    // MARK: Persistence (with migration from v1 default+extra model)
+
+    private struct Legacy: Codable { var id: UUID; var name: String; var configDir: String? }
+
     private func load() {
         if let data = UserDefaults.standard.data(forKey: key),
            let decoded = try? JSONDecoder().decode([ConfigAccount].self, from: data) {
             accounts = decoded
+            return
         }
-        if !accounts.contains(where: { $0.id == Self.defaultID }) {
-            accounts.insert(ConfigAccount(id: Self.defaultID, name: "Default", configDir: nil), at: 0)
+        // Migrate v1: keep only file-based (configDir != nil) accounts.
+        if let data = UserDefaults.standard.data(forKey: "configAccounts.v1"),
+           let old = try? JSONDecoder().decode([Legacy].self, from: data) {
+            accounts = old.compactMap { l in
+                l.configDir.map { ConfigAccount(id: l.id, name: l.name, configDir: $0) }
+            }
+            persist()
         }
     }
 
@@ -44,14 +50,19 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    // MARK: Account management (no Keychain, no login mutation)
+    // MARK: Accounts
 
-    func addAccount(name: String) {
+    /// Add a new account by capturing whatever you're logged into right now.
+    func addCurrentLogin() {
         let id = UUID()
         let dir = CCLogin.newConfigDir(for: id)
-        accounts.append(ConfigAccount(id: id, name: name.isEmpty ? "Account \(accounts.count + 1)" : name, configDir: dir))
+        accounts.append(ConfigAccount(id: id, name: "Account \(accounts.count + 1)", configDir: dir))
         persist()
+        CCLogin.captureCurrent(configDir: dir)   // Terminal captures the live login into this dir
     }
+
+    /// Re-capture the current live login into an existing account (if it went stale).
+    func recapture(_ account: ConfigAccount) { CCLogin.captureCurrent(configDir: account.configDir) }
 
     func rename(_ account: ConfigAccount, to name: String) {
         let t = name.trimmingCharacters(in: .whitespaces)
@@ -60,29 +71,16 @@ final class AccountStore: ObservableObject {
         persist()
     }
 
-    func login(_ account: ConfigAccount) { CCLogin.openLogin(configDir: account.configDir) }
-
-    /// Snapshot the current default login into this account's own file.
-    func captureCurrent(_ account: ConfigAccount) {
-        guard let dir = account.configDir else { return }
-        CCLogin.captureCurrent(configDir: dir)
-    }
-
-    /// True if this extra account has its own credential file (independent).
-    func isIndependent(_ account: ConfigAccount) -> Bool {
-        guard let dir = account.configDir else { return true }   // default is the keychain
-        return CredentialFile.exists(dir)
-    }
-
     func remove(_ account: ConfigAccount) {
-        guard account.id != Self.defaultID else { return }   // can't remove default
-        if let dir = account.configDir { try? FileManager.default.removeItem(atPath: dir) }
+        try? FileManager.default.removeItem(atPath: account.configDir)
         accounts.removeAll { $0.id == account.id }
         states[account.id] = nil; identities[account.id] = nil
         persist()
     }
 
-    // MARK: Refresh (read-only)
+    func hasCredential(_ account: ConfigAccount) -> Bool { CredentialFile.exists(account.configDir) }
+
+    // MARK: Refresh (read-only + token refresh; no Keychain)
 
     func refresh() async {
         isRefreshing = true
@@ -90,8 +88,7 @@ final class AccountStore: ObservableObject {
         await withTaskGroup(of: (UUID, ClaudeCode.State, ClaudeCode.Identity?).self) { group in
             for a in items {
                 group.addTask {
-                    // Keep a file-based account's token alive before reading it.
-                    if let dir = a.configDir { await CredentialFile.refreshIfNeeded(dir) }
+                    await CredentialFile.refreshIfNeeded(a.configDir)   // keep token alive
                     async let u = ClaudeCode.fetchUsage(configDir: a.configDir)
                     async let i = ClaudeCode.fetchIdentity(configDir: a.configDir, token: nil)
                     return (a.id, await u, await i)
@@ -113,7 +110,6 @@ final class AccountStore: ObservableObject {
         return nil
     }
 
-    /// Title for a card: the real org from the CLI, else the user's name.
     func title(for account: ConfigAccount) -> String {
         if let org = identities[account.id]?.orgName, !org.isEmpty { return org }
         return account.name
@@ -128,12 +124,8 @@ final class AccountStore: ObservableObject {
                 parts.append("\(Int((p * 100).rounded()))%")
             }
         }
-        if !parts.isEmpty {
-            let s = parts.joined(separator: " · ")
-            return maxed ? "⚠︎ \(s)" : s
-        }
-        if case .loading? = states[Self.defaultID] { return "…" }
-        if states[Self.defaultID] == nil { return "…" }
-        return "Claude"
+        if !parts.isEmpty { return (maxed ? "⚠︎ " : "") + parts.joined(separator: " · ") }
+        if accounts.isEmpty { return "Claude" }
+        return "…"
     }
 }

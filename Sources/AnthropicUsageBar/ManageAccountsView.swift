@@ -2,36 +2,27 @@ import SwiftUI
 
 struct ManageAccountsView: View {
     @EnvironmentObject var store: AccountStore
-    @State private var newName = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Manage Accounts").font(.title2.weight(.semibold))
 
-                Text("See usage for several Claude accounts at once. **Default** is the account Claude Code and Conductor use. Each extra account logs in independently (its own config dir) — logging in never touches your default login or the Keychain.")
+                Text("Each account keeps **its own login on file**, so they all stay independent — switching Claude Code / Conductor never changes what's shown here.\n\nTo add one: log into that account (in Claude Code or Conductor), then click **Add current login** — it captures whoever you're logged in as right now.")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                VStack(spacing: 8) {
-                    ForEach(store.accounts) { acct in
-                        AccountRow(account: acct)
+                Button { store.addCurrentLogin() } label: {
+                    Label("Add current login", systemImage: "plus.circle.fill")
+                }.buttonStyle(.borderedProminent)
+
+                if store.accounts.isEmpty {
+                    Text("No accounts yet.").font(.caption).foregroundStyle(.secondary)
+                } else {
+                    VStack(spacing: 8) {
+                        ForEach(store.accounts) { acct in AccountRow(account: acct) }
                     }
                 }
-
-                GroupBox("Add another account") {
-                    HStack {
-                        TextField("Name (e.g. Work)", text: $newName)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Add") {
-                            store.addAccount(name: newName.trimmingCharacters(in: .whitespaces)); newName = ""
-                        }.buttonStyle(.borderedProminent)
-                    }
-                    .padding(6)
-                }
-                Text("After adding, click **Log in** on the new account and sign in as that Claude account.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-
                 Spacer()
             }
             .padding(20)
@@ -46,32 +37,27 @@ private struct AccountRow: View {
 
     var body: some View {
         HStack {
-            Image(systemName: account.configDir == nil ? "person.crop.circle.fill" : "person.crop.circle")
-                .foregroundStyle(account.configDir == nil ? Color.accentColor : Color.secondary)
+            Image(systemName: store.hasCredential(account) ? "person.crop.circle.fill" : "person.crop.circle.badge.exclamationmark")
+                .foregroundStyle(store.hasCredential(account) ? Color.accentColor : Color.orange)
             VStack(alignment: .leading, spacing: 0) {
                 TextField("Name", text: $name)
                     .textFieldStyle(.roundedBorder)
                     .onAppear { name = account.name }
                     .onSubmit { store.rename(account, to: name) }
-                if let org = store.identities[account.id]?.orgName, !org.isEmpty {
-                    Text([org, store.identities[account.id]?.email].compactMap { $0 }.joined(separator: " · "))
+                if let ident = store.identities[account.id] {
+                    Text([ident.orgName, ident.email].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                } else if !store.hasCredential(account) {
+                    Text("no login saved — log into it, then Re-capture")
+                        .font(.caption2).foregroundStyle(.orange)
                 }
             }
             Spacer()
-            if account.id != AccountStore.defaultID {
-                if !store.isIndependent(account) {
-                    Text("mirrors default").font(.caption2).foregroundStyle(.orange)
-                }
-                Button("Use current login") { store.captureCurrent(account) }
-                    .buttonStyle(.borderless).font(.caption)
-                    .help("Snapshot whatever you're logged into right now as this account")
-            }
-            Button("Log in") { store.login(account) }.buttonStyle(.borderless).font(.caption)
-            if account.id != AccountStore.defaultID {
-                Button(role: .destructive) { store.remove(account) } label: { Image(systemName: "trash") }
-                    .buttonStyle(.borderless)
-            }
+            Button("Re-capture") { store.recapture(account) }
+                .buttonStyle(.borderless).font(.caption)
+                .help("Save the account you're currently logged into, into this slot")
+            Button(role: .destructive) { store.remove(account) } label: { Image(systemName: "trash") }
+                .buttonStyle(.borderless)
         }
     }
 }
