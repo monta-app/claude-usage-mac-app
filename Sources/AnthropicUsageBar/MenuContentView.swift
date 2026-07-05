@@ -72,6 +72,11 @@ struct MenuContentView: View {
                 .disabled(store.priming.contains(acct.id))
                 .help("Send one tiny message to start the 5-hour window now, so it resets sooner")
             }
+            if let sch = acct.schedule, sch.enabled {
+                Label("Auto-prime \(sch.startLabel)–\(sch.endLabel)\(sch.weekdaysOnly ? " · weekdays" : "")",
+                      systemImage: "clock.arrow.2.circlepath")
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
         }
         .padding(12)
     }

@@ -16,13 +16,19 @@ final class AccountStore: ObservableObject {
 
     private let key = "configAccounts.v2"
     private var timer: Timer?
+    private var scheduleTimer: Timer?
+    private var lastPrimed: [UUID: Date] = [:]
 
     init() {
         load()
         timer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in
             Task { await self?.refresh() }
         }
-        Task { await refresh() }
+        // Check auto-prime schedules once a minute (cheap; only acts on gaps).
+        scheduleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkSchedules() }
+        }
+        Task { await refresh(); checkSchedules() }
     }
 
     // MARK: Persistence (with migration from v1 default+extra model)
@@ -64,6 +70,13 @@ final class AccountStore: ObservableObject {
 
     /// Re-capture the current live login into an existing account (if it went stale).
     func recapture(_ account: ConfigAccount) { CCLogin.captureCurrent(configDir: account.configDir) }
+
+    func setSchedule(_ account: ConfigAccount, _ schedule: PrimeSchedule) {
+        guard let i = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+        accounts[i].schedule = schedule
+        persist()
+        checkSchedules()
+    }
 
     func rename(_ account: ConfigAccount, to name: String) {
         let t = name.trimmingCharacters(in: .whitespaces)
@@ -115,6 +128,44 @@ final class AccountStore: ObservableObject {
         }
         lastUpdated = Date()
         isRefreshing = false
+    }
+
+    // MARK: Auto-prime scheduling
+
+    /// The 5h "current session" window for an account, if present.
+    func sessionWindow(of id: UUID) -> ClaudeCode.Window? {
+        guard case .ok(let ws)? = states[id] else { return nil }
+        return ws.first { $0.id == "five_hour" || $0.label.lowercased().contains("session") }
+    }
+
+    /// True if a 5h block is currently running (has a future reset, or shows usage).
+    private func sessionActive(_ id: UUID, now: Date) -> Bool {
+        guard let w = sessionWindow(of: id) else { return false }
+        if let r = w.resetAt, r > now { return true }
+        return w.fraction > 0.02   // used but no parsed reset → still treat as active
+    }
+
+    /// Called every minute: within each enabled account's active window, if no
+    /// 5h block is running and we didn't just prime, start one.
+    func checkSchedules() {
+        let now = Date()
+        let cal = Calendar.current
+        for a in accounts {
+            guard let s = a.schedule, s.enabled, hasCredential(a) else { continue }
+            if priming.contains(a.id) { continue }
+            if s.weekdaysOnly {
+                let wd = cal.component(.weekday, from: now)   // 1=Sun … 7=Sat
+                if wd == 1 || wd == 7 { continue }
+            }
+            let dayStart = cal.startOfDay(for: now)
+            let activeStart = dayStart.addingTimeInterval(Double(s.startMinutes) * 60)
+            let activeEnd = activeStart.addingTimeInterval(Double(s.windowHours) * 3600)
+            guard now >= activeStart, now <= activeEnd else { continue }
+            if sessionActive(a.id, now: now) { continue }
+            if let last = lastPrimed[a.id], now.timeIntervalSince(last) < 300 { continue }
+            lastPrimed[a.id] = now
+            startSession(a)
+        }
     }
 
     // MARK: Derived

@@ -9,6 +9,28 @@ struct ConfigAccount: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var name: String
     var configDir: String
+    /// Optional daily auto-prime schedule. nil / disabled = off.
+    var schedule: PrimeSchedule?
+}
+
+/// Auto-prime the 5h window on a daily schedule. The rule: within the active
+/// window (`start` … `start + windowHours`), whenever no 5h block is running,
+/// start one. This both kicks off the day at `start` AND restarts a fresh block
+/// ASAP after the previous one runs out — while doing nothing when you're
+/// already working (your own messages keep the block alive, so it only fills gaps).
+struct PrimeSchedule: Codable, Equatable {
+    var enabled: Bool = false
+    var startMinutes: Int = 8 * 60   // minutes past local midnight
+    var windowHours: Int = 9         // keep chaining for this long after start
+    var weekdaysOnly: Bool = true
+
+    /// "8:00" style label for the start time.
+    var startLabel: String { String(format: "%d:%02d", startMinutes / 60, startMinutes % 60) }
+    /// "17:00" style label for when auto-prime stops for the day.
+    var endLabel: String {
+        let m = (startMinutes + windowHours * 60) % (24 * 60)
+        return String(format: "%d:%02d", m / 60, m % 60)
+    }
 }
 
 enum CCLogin {
