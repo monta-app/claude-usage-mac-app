@@ -14,7 +14,8 @@ enum ClaudeCode {
         let id: String        // the label, used as identity
         let label: String
         let fraction: Double  // 0...1
-        let resetText: String?
+        let resetText: String?   // raw text as printed by the CLI
+        let resetAt: Date?       // parsed reset instant, for a live countdown
     }
 
     enum State {
@@ -71,8 +72,9 @@ enum ClaudeCode {
                 let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"
                 resetText = f.string(from: Date(timeIntervalSince1970: secs))
             }
+            let resetAt = secs > 0 ? Date(timeIntervalSince1970: secs) : nil
             windows.append(Window(id: key, label: humanise(key),
-                                  fraction: min(max(frac, 0), 1), resetText: resetText))
+                                  fraction: min(max(frac, 0), 1), resetText: resetText, resetAt: resetAt))
         }
         guard !windows.isEmpty else { return .error("No limit windows in response") }
         windows.sort { $0.id < $1.id }
@@ -125,6 +127,35 @@ enum ClaudeCode {
         task.waitUntilExit(); killer.cancel()
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return Identity(email: root["email"] as? String, orgName: root["orgName"] as? String)
+    }
+
+    /// Start (prime) the 5h rolling window for a login by sending one minimal
+    /// message. The block begins at the first message and runs exactly 5 hours,
+    /// so this is how you kick the clock off on demand. Negligible usage.
+    /// Returns true if the message was accepted.
+    @discardableResult
+    static func primeSession(configDir: String?) async -> Bool {
+        await Task.detached(priority: .utility) { blockingPrime(configDir: configDir) }.value
+    }
+
+    private static func blockingPrime(configDir: String?) -> Bool {
+        guard let bin = resolveClaude() else { return false }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: bin)
+        // A trivial prompt is enough to open the 5h block; keep output tiny.
+        task.arguments = ["-p", "Reply with just: ok"]
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        if let configDir { env["CLAUDE_CONFIG_DIR"] = configDir }
+        task.environment = env
+        task.currentDirectoryURL = URL(fileURLWithPath: neutralWorkdir())
+        task.standardOutput = Pipe(); task.standardError = Pipe()
+        do { try task.run() } catch { return false }
+        let deadline = DispatchTime.now() + 60
+        let killer = DispatchWorkItem { if task.isRunning { task.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: deadline, execute: killer)
+        task.waitUntilExit(); killer.cancel()
+        return task.terminationStatus == 0
     }
 
     /// Fetch limits for a specific login. `configDir == nil` uses the default
@@ -205,6 +236,40 @@ enum ClaudeCode {
         pattern: #"Total cost:\s*\$([0-9][0-9,]*\.?[0-9]*)"#,
         options: [.caseInsensitive])
 
+    /// Parse a CLI reset string like "Jul 5 at 6:09pm (America/New_York)" into
+    /// an absolute Date. Best-effort: returns nil if the wording changes, in
+    /// which case the UI falls back to showing the raw text.
+    static func parseReset(_ raw: String) -> Date? {
+        var s = raw.trimmingCharacters(in: .whitespaces)
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = .current
+        // Pull a trailing "(America/New_York)" timezone, if present.
+        if let r = s.range(of: #"\(([^)]+)\)\s*$"#, options: .regularExpression) {
+            let name = String(s[r]).trimmingCharacters(in: CharacterSet(charactersIn: "() "))
+            if let z = TimeZone(identifier: name) { cal.timeZone = z }
+            s = String(s[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
+        }
+        s = s.replacingOccurrences(of: " at ", with: " ")
+
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = cal.timeZone
+        for fmt in ["MMM d h:mma", "MMM d h:mm a", "MMM d, h:mma", "MMM d, h:mm a"] {
+            df.dateFormat = fmt
+            guard let d = df.date(from: s) else { continue }
+            var comps = cal.dateComponents([.month, .day, .hour, .minute], from: d)
+            comps.year = cal.component(.year, from: Date())
+            guard let withYear = cal.date(from: comps) else { continue }
+            // No year in the string: if it lands well in the past, it's next year.
+            if withYear.timeIntervalSinceNow < -86_400 {
+                comps.year! += 1
+                return cal.date(from: comps)
+            }
+            return withYear
+        }
+        return nil
+    }
+
     private static func parse(_ text: String) -> State {
         let lower = text.lowercased()
         if lower.contains("please run /login") || lower.contains("not logged in")
@@ -223,7 +288,7 @@ enum ClaudeCode {
             }
             windows.append(Window(id: label, label: label,
                                   fraction: min(max(pct / 100.0, 0), 1),
-                                  resetText: reset))
+                                  resetText: reset, resetAt: reset.flatMap(parseReset)))
         }
 
         if windows.isEmpty {

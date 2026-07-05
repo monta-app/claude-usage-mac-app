@@ -12,6 +12,7 @@ final class AccountStore: ObservableObject {
     @Published var identities: [UUID: ClaudeCode.Identity] = [:]
     @Published var lastUpdated: Date?
     @Published var isRefreshing = false
+    @Published var priming: Set<UUID> = []   // accounts currently starting a session
 
     private let key = "configAccounts.v2"
     private var timer: Timer?
@@ -79,6 +80,19 @@ final class AccountStore: ObservableObject {
     }
 
     func hasCredential(_ account: ConfigAccount) -> Bool { CredentialFile.exists(account.configDir) }
+
+    /// Kick off the 5h rolling window for this account now (one tiny message),
+    /// then refresh so the new reset time / countdown shows immediately.
+    func startSession(_ account: ConfigAccount) {
+        guard !priming.contains(account.id) else { return }
+        priming.insert(account.id)
+        Task {
+            await CredentialFile.refreshIfNeeded(account.configDir)
+            _ = await ClaudeCode.primeSession(configDir: account.configDir)
+            priming.remove(account.id)
+            await refresh()
+        }
+    }
 
     // MARK: Refresh (read-only + token refresh; no Keychain)
 

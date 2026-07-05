@@ -58,6 +58,20 @@ struct MenuContentView: View {
                 }
             }
             planBlock(state: store.states[acct.id] ?? .loading)
+            if store.hasCredential(acct) {
+                Button {
+                    store.startSession(acct)
+                } label: {
+                    if store.priming.contains(acct.id) {
+                        HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Starting session…") }
+                    } else {
+                        Label("Start 5h session", systemImage: "play.circle")
+                    }
+                }
+                .buttonStyle(.borderless).font(.caption)
+                .disabled(store.priming.contains(acct.id))
+                .help("Send one tiny message to start the 5-hour window now, so it resets sooner")
+            }
         }
         .padding(12)
     }
@@ -95,7 +109,10 @@ struct MenuContentView: View {
                 Text(String(format: "%.0f%%", w.fraction * 100)).font(.caption.monospacedDigit()).foregroundStyle(color)
             }
             ProgressView(value: w.fraction).tint(color)
-            if let reset = w.resetText {
+            if let at = w.resetAt {
+                (Text("resets in ") + Text(at, style: .relative))
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            } else if let reset = w.resetText {
                 Text("resets \(reset)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             }
         }
