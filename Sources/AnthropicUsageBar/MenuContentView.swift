@@ -59,26 +59,44 @@ struct MenuContentView: View {
             }
             planBlock(state: store.states[acct.id] ?? .loading)
             if store.hasCredential(acct) {
-                Button {
-                    store.startSession(acct)
-                } label: {
-                    if store.priming.contains(acct.id) {
-                        HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Starting session…") }
-                    } else {
-                        Label("Start 5h session", systemImage: "play.circle")
-                    }
-                }
-                .buttonStyle(.borderless).font(.caption)
-                .disabled(store.priming.contains(acct.id))
-                .help("Send one tiny message to start the 5-hour window now, so it resets sooner")
+                sessionControls(acct)
             }
+        }
+        .padding(12)
+    }
+
+    /// The "start / auto-prime the 5h window" controls — visually separated from
+    /// the plan bars above so they read as account-level actions, not part of
+    /// the last plan.
+    @ViewBuilder
+    private func sessionControls(_ acct: ConfigAccount) -> some View {
+        Divider().padding(.vertical, 2)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("SESSION")
+                .font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
+                .kerning(0.5)
+            Button {
+                store.startSession(acct)
+            } label: {
+                if store.priming.contains(acct.id) {
+                    HStack(spacing: 4) { ProgressView().controlSize(.mini); Text("Starting session…") }
+                } else {
+                    Label("Start 5h session now", systemImage: "play.circle")
+                }
+            }
+            .buttonStyle(.borderless).font(.caption)
+            .disabled(store.priming.contains(acct.id))
+            .help("Send one tiny message to start the 5-hour window now, so it resets sooner")
+
             if let sch = acct.schedule, sch.enabled {
                 Label("Auto-prime \(sch.startLabel)–\(sch.endLabel)\(sch.weekdaysOnly ? " · weekdays" : "")",
                       systemImage: "clock.arrow.2.circlepath")
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            } else {
+                Text("Auto-prime off — set a daily schedule in Manage…")
+                    .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
             }
         }
-        .padding(12)
     }
 
     @ViewBuilder
