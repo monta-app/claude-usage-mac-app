@@ -254,7 +254,8 @@ enum ClaudeCode {
         let df = DateFormatter()
         df.locale = Locale(identifier: "en_US_POSIX")
         df.timeZone = cal.timeZone
-        for fmt in ["MMM d h:mma", "MMM d h:mm a", "MMM d, h:mma", "MMM d, h:mm a"] {
+        for fmt in ["MMM d h:mma", "MMM d h:mm a", "MMM d, h:mma", "MMM d, h:mm a",
+                    "MMM d ha", "MMM d h a", "MMM d, ha", "MMM d, h a"] {
             df.dateFormat = fmt
             guard let d = df.date(from: s) else { continue }
             var comps = cal.dateComponents([.month, .day, .hour, .minute], from: d)

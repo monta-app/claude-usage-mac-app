@@ -19,6 +19,16 @@ enum Format {
         }
     }
 
+    /// Reset clock time in the user's LOCAL timezone. Same-day → "3:00 PM";
+    /// otherwise "Jul 12, 12:00 PM".
+    static func clock(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = .current
+        f.dateFormat = Calendar.current.isDateInToday(date) ? "h:mm a" : "MMM d, h:mm a"
+        return f.string(from: date)
+    }
+
     static func relative(_ date: Date?) -> String {
         guard let date else { return "never" }
         let f = RelativeDateTimeFormatter()

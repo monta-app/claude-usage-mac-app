@@ -115,7 +115,7 @@ struct MenuContentView: View {
             }
             ProgressView(value: w.fraction).tint(color)
             if let at = w.resetAt {
-                (Text("resets in ") + Text(at, style: .relative))
+                (Text("resets \(Format.clock(at)) · in ") + Text(at, style: .relative))
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             } else if let reset = w.resetText {
                 Text("resets \(reset)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
