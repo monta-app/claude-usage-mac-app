@@ -19,3 +19,6 @@ DerivedData/
 
 # icon build scratch
 AppIcon.iconset/
+
+# packaged installer (built by CI / make-dmg.sh)
+Claude-Usage.dmg

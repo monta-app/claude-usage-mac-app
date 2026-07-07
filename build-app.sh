@@ -66,8 +66,9 @@ PLIST
 #   fall back to ad-hoc.
 SIGN_ID="${CODESIGN_ID:-}"
 if [ -z "$SIGN_ID" ]; then
+  # `|| true` so a no-match grep under `set -o pipefail` doesn't abort the build.
   SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null \
-    | grep -oE '"[^"]*(Claude Usage|AnthropicUsageBar)[^"]*"' | head -1 | tr -d '"')
+    | grep -oE '"[^"]*(Claude Usage|AnthropicUsageBar)[^"]*"' | head -1 | tr -d '"' || true)
 fi
 if [ -n "$SIGN_ID" ]; then
   echo "==> Signing with stable identity: $SIGN_ID"

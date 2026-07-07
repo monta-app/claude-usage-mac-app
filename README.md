@@ -6,7 +6,19 @@ The menu bar shows each account's highest limit, e.g. `56% · 40%` (⚠︎ at 10
 
 ---
 
-## Install (2 minutes)
+## Install (fastest) — download the DMG
+
+Grab the latest build, no compiler needed:
+
+**→ [Download Claude-Usage.dmg](https://github.com/monta-app/claude-usage-mac-app/releases/latest/download/Claude-Usage.dmg)**
+
+Open it, drag **Claude Usage** to Applications, launch it. It's ad-hoc signed, so the first launch is blocked by Gatekeeper — **right-click the app → Open → Open** (once). Then it self-adds to Login Items so it's always there after a reboot.
+
+The DMG is rebuilt automatically from `main` on every push.
+
+---
+
+## Install from source (2 minutes)
 
 You need [Claude Code](https://claude.com/claude-code) installed and logged in, plus Xcode command-line tools (`xcode-select --install`).
 

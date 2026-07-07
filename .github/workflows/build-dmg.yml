@@ -1,0 +1,48 @@
+name: Build DMG
+
+on:
+  push:
+    branches: [main]
+    # Skip doc-only churn so we don't cut a release for a README tweak.
+    paths-ignore:
+      - '**/*.md'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # needed to publish the release + upload the asset
+
+concurrency:
+  group: build-dmg
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rsvg-convert (icon rendering)
+        run: brew install librsvg
+
+      - name: Build DMG
+        run: ./make-dmg.sh
+
+      - name: Publish rolling "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          NOTES="Automated build from \`main\` @ ${GITHUB_SHA:0:7}.
+
+          **Install:** open the DMG and drag **Claude Usage** to Applications.
+
+          The app is ad-hoc signed (no Apple Developer cert), so on first launch
+          macOS Gatekeeper will block it. Right-click the app → **Open** → **Open**,
+          or run \`xattr -cr \"/Applications/Claude Usage.app\"\` once."
+
+          # Recreate the 'latest' release so the asset is always the newest build.
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest "Claude-Usage.dmg" \
+            --title "Latest build" \
+            --notes "$NOTES" \
+            --latest
