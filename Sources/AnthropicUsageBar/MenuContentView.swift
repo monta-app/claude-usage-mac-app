@@ -4,6 +4,7 @@ import AppKit
 struct MenuContentView: View {
     @EnvironmentObject var store: AccountStore
     @Environment(\.openWindow) private var openWindow
+    @StateObject private var loginItem = LoginItem.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -21,9 +22,26 @@ struct MenuContentView: View {
                 }
             }
             Divider()
+            loginRow
+            Divider()
             footer
         }
         .frame(width: 320)
+        .onAppear { loginItem.refresh() }
+    }
+
+    private var loginRow: some View {
+        Toggle(isOn: Binding(
+            get: { loginItem.isEnabled },
+            set: { loginItem.setEnabled($0) }
+        )) {
+            Label("Launch at login", systemImage: "power")
+                .font(.caption)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     private var header: some View {

@@ -16,3 +16,6 @@ AnthropicUsageBar.app/
 *.xcworkspace/
 xcuserdata/
 DerivedData/
+
+# icon build scratch
+AppIcon.iconset/

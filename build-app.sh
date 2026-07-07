@@ -19,6 +19,24 @@ mkdir -p "$APPDIR/Contents/Resources"
 
 cp ".build/release/$EXE" "$APPDIR/Contents/MacOS/$EXE"
 
+# App icon (Finder, ⌘-Tab, Login Items). Rebuild AppIcon.icns from icon.svg if
+# the source is newer or the icns is missing.
+if [ -f icon.svg ] && { [ ! -f AppIcon.icns ] || [ icon.svg -nt AppIcon.icns ]; }; then
+  echo "==> Rendering AppIcon.icns from icon.svg…"
+  rm -rf AppIcon.iconset && mkdir AppIcon.iconset
+  for pair in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
+              "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
+              "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
+    set -- $pair
+    rsvg-convert -w "$1" -h "$1" icon.svg -o "AppIcon.iconset/$2.png"
+  done
+  iconutil -c icns AppIcon.iconset -o AppIcon.icns
+  rm -rf AppIcon.iconset
+fi
+if [ -f AppIcon.icns ]; then
+  cp AppIcon.icns "$APPDIR/Contents/Resources/AppIcon.icns"
+fi
+
 cat > "$APPDIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -31,6 +49,8 @@ cat > "$APPDIR/Contents/Info.plist" <<PLIST
     <key>CFBundleVersion</key>           <string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>       <string>APPL</string>
+    <key>CFBundleIconFile</key>          <string>AppIcon</string>
+    <key>CFBundleIconName</key>          <string>AppIcon</string>
     <key>LSMinimumSystemVersion</key>    <string>14.0</string>
     <key>LSUIElement</key>               <true/>
     <key>NSHumanReadableCopyright</key>  <string>Local build</string>
