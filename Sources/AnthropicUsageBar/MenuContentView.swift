@@ -46,6 +46,13 @@ struct MenuContentView: View {
 
     private var header: some View {
         HStack {
+            if let icon = NSImage(named: "AppIcon") {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 20, height: 20)
+                    .clipShape(RoundedRectangle(cornerRadius: 4.5, style: .continuous))
+            }
             Text("Claude Usage").font(.headline)
             Spacer()
             Button { Task { await store.refresh() } } label: {
