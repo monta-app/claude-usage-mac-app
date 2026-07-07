@@ -22,11 +22,13 @@ final class AccountStore: ObservableObject {
     init() {
         load()
         timer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in
-            Task { await self?.refresh() }
+            guard let self else { return }
+            Task { await self.refresh() }
         }
         // Check auto-prime schedules once a minute (cheap; only acts on gaps).
         scheduleTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.checkSchedules() }
+            guard let self else { return }
+            Task { @MainActor in self.checkSchedules() }
         }
         Task { await refresh(); checkSchedules() }
     }
