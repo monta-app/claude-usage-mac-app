@@ -12,8 +12,6 @@ Grab the latest build, no compiler needed:
 
 **→ [Download Claude-Usage.dmg](https://github.com/monta-app/claude-usage-mac-app/releases/latest/download/Claude-Usage.dmg)**
 
-*(Private repo — you must be signed into GitHub with `monta-app` access. The link 404s for anonymous/logged-out requests, not because it's broken.)*
-
 Open it, drag **Claude Usage** to Applications, launch it. It's ad-hoc signed, so the first launch is blocked by Gatekeeper — **right-click the app → Open → Open** (once). Then it self-adds to Login Items so it's always there after a reboot.
 
 The DMG is rebuilt automatically from `main` on every push.
