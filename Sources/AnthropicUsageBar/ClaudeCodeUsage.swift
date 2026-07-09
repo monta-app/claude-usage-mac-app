@@ -53,32 +53,80 @@ enum ClaudeCode {
         }
     }
 
+    /// Parse the `GET /api/oauth/usage` response.
+    ///
+    /// Claude Code 2.1+ returns a top-level `limits` array of
+    /// `{kind, percent, resets_at (ISO-8601 string), scope}`. `utilization`
+    /// on the legacy top-level keys (`five_hour`, `seven_day`, …) is a percent
+    /// (0–100), and `resets_at` is now an ISO-8601 string, not epoch seconds —
+    /// both changed from the older shape this app first shipped against.
     private static func parseAPI(_ data: Data) -> State {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return .error("Unexpected API response")
         }
-        let limits = (root["rate_limits"] as? [String: Any])
-            ?? ((root["usage"] as? [String: Any])?["rate_limits"] as? [String: Any])
-        guard let limits else { return .error("No limits in API response") }
 
         var windows: [Window] = []
-        for (key, value) in limits {
-            guard let d = value as? [String: Any] else { continue }
-            let raw = (d["utilization"] as? Double) ?? Double((d["utilization"] as? Int) ?? 0)
-            let frac = raw > 1 ? raw / 100.0 : raw
-            var resetText: String? = nil
-            let secs = (d["resets_at"] as? Double) ?? Double((d["resets_at"] as? Int) ?? 0)
-            if secs > 0 {
-                let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"
-                resetText = f.string(from: Date(timeIntervalSince1970: secs))
+
+        // Preferred: the structured `limits` array.
+        if let limits = root["limits"] as? [[String: Any]] {
+            for lim in limits {
+                guard let kind = lim["kind"] as? String else { continue }
+                let pct = (lim["percent"] as? Double) ?? Double((lim["percent"] as? Int) ?? 0)
+                let (id, label) = windowIdentity(kind: kind, scope: lim["scope"] as? [String: Any])
+                let resetAt = isoDate(lim["resets_at"] as? String)
+                windows.append(Window(id: id, label: label,
+                                      fraction: min(max(pct / 100.0, 0), 1),
+                                      resetText: resetAt.map(shortReset), resetAt: resetAt))
             }
-            let resetAt = secs > 0 ? Date(timeIntervalSince1970: secs) : nil
-            windows.append(Window(id: key, label: humanise(key),
-                                  fraction: min(max(frac, 0), 1), resetText: resetText, resetAt: resetAt))
         }
+
+        // Fallback: legacy top-level rate-limit keys (utilization is a percent).
+        if windows.isEmpty {
+            for key in ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_fable"] {
+                guard let d = root[key] as? [String: Any],
+                      let raw = (d["utilization"] as? Double) ?? Double((d["utilization"] as? Int) ?? -1) as Double?,
+                      raw >= 0 else { continue }
+                let frac = raw > 1 ? raw / 100.0 : raw   // tolerate either scale
+                let resetAt = isoDate(d["resets_at"] as? String)
+                windows.append(Window(id: key, label: humanise(key),
+                                      fraction: min(max(frac, 0), 1),
+                                      resetText: resetAt.map(shortReset), resetAt: resetAt))
+            }
+        }
+
         guard !windows.isEmpty else { return .error("No limit windows in response") }
-        windows.sort { $0.id < $1.id }
+        // Stable order: session first, then weekly (all), then scoped weeklies.
+        let rank: [String: Int] = ["five_hour": 0, "seven_day": 1]
+        windows.sort { (rank[$0.id] ?? 9, $0.label) < (rank[$1.id] ?? 9, $1.label) }
         return .ok(windows)
+    }
+
+    /// Map a `limits[].kind` (+ optional scope) to our stable window id/label.
+    /// The `five_hour` / `seven_day` ids are relied on by the auto-prime logic.
+    private static func windowIdentity(kind: String, scope: [String: Any]?) -> (String, String) {
+        switch kind {
+        case "session":    return ("five_hour", "Current session")
+        case "weekly_all": return ("seven_day", "Current week (all models)")
+        case "weekly_scoped":
+            let model = (scope?["model"] as? [String: Any])?["display_name"] as? String ?? "scoped"
+            return ("seven_day_\(model.lowercased())", "Current week (\(model))")
+        default:
+            return (kind, kind.replacingOccurrences(of: "_", with: " ").capitalized)
+        }
+    }
+
+    private static let isoWithFraction: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+    }()
+    private static let isoPlain: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
+    }()
+    private static func isoDate(_ s: String?) -> Date? {
+        guard let s, !s.isEmpty else { return nil }
+        return isoWithFraction.date(from: s) ?? isoPlain.date(from: s)
+    }
+    private static func shortReset(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"; return f.string(from: d)
     }
 
     private static func humanise(_ key: String) -> String {
@@ -86,6 +134,7 @@ enum ClaudeCode {
         case "five_hour": return "Current session"
         case "seven_day": return "Current week (all models)"
         case "seven_day_opus", "seven_day_oauth_opus": return "Current week (Opus)"
+        case "seven_day_sonnet": return "Current week (Sonnet)"
         case "seven_day_fable", "seven_day_oauth_fable": return "Current week (Fable)"
         default: return key.replacingOccurrences(of: "_", with: " ").capitalized
         }

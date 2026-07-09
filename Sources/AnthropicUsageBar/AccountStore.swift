@@ -118,9 +118,17 @@ final class AccountStore: ObservableObject {
             for a in items {
                 group.addTask {
                     await CredentialFile.refreshIfNeeded(a.configDir)   // keep token alive
-                    async let u = ClaudeCode.fetchUsage(configDir: a.configDir)
                     async let i = ClaudeCode.fetchIdentity(configDir: a.configDir, token: nil)
-                    return (a.id, await u, await i)
+                    // Prefer the HTTP usage endpoint (structured JSON, robust to
+                    // CLI changes); fall back to `claude -p /usage` only if the
+                    // credential file has no access token.
+                    let state: ClaudeCode.State
+                    if let token = CredentialFile.accessToken(a.configDir) {
+                        state = await ClaudeCode.fetchViaToken(token)
+                    } else {
+                        state = await ClaudeCode.fetchUsage(configDir: a.configDir)
+                    }
+                    return (a.id, state, await i)
                 }
             }
             for await (id, state, ident) in group {

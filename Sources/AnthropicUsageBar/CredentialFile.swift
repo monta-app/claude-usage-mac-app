@@ -23,6 +23,12 @@ enum CredentialFile {
         return oauth
     }
 
+    /// The current OAuth access token for this login, if present. Used to read
+    /// usage directly from the HTTP endpoint (robust to CLI output changes).
+    static func accessToken(_ configDir: String) -> String? {
+        (readOAuth(configDir)?["accessToken"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     /// Refresh the file's token if it's within `window` seconds of expiry (or
     /// already expired). Best-effort: on any failure the existing file is kept.
     /// Returns true if a refresh was performed and written.
