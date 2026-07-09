@@ -4,6 +4,10 @@ A tiny macOS menu-bar app that shows your **Claude Code plan usage** — one lin
 
 The menu bar shows each account's highest limit, e.g. `56% · 40%` (⚠︎ at 100%). See **[INSTALL.md](INSTALL.md)** for the quick start.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Claude Usage menu-bar dropdown showing plan usage for multiple accounts" width="360">
+</p>
+
 ---
 
 ## Install (fastest) — download the DMG
