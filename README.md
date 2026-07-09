@@ -58,3 +58,13 @@ Each extra account lives in its own `CLAUDE_CONFIG_DIR`, so it's an independent 
 
 Reads plan limits via `claude -p "/usage"` (per config dir) and the account name via `claude auth status`. The app only reads usage and opens the official `claude /login` — it never touches the Keychain, stores no tokens, and never modifies a login. Refresh every 5 min or ↻.
 
+---
+
+## Disclaimer
+
+This is an **unofficial**, community-built tool. It is **not affiliated with, endorsed by, or sponsored by Anthropic**. "Claude", "Claude Code", and "Anthropic" are trademarks of Anthropic PBC and are used here only descriptively to indicate what the app reads. The app talks solely to your locally installed Claude Code CLI and Anthropic's own OAuth/usage endpoints on your behalf.
+
+## License
+
+[MIT](LICENSE) © Casper Rasmussen. Provided "as is", without warranty of any kind.
+
