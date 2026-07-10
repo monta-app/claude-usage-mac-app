@@ -1,46 +1,44 @@
 import Foundation
-import UserNotifications
+import AppKit
 
-/// Posts a local notification when an account's usage window hits 100%.
+/// Posts a notification when an account's usage window hits 100%.
+///
+/// Delivery uses `osascript display notification` rather than
+/// `UNUserNotificationCenter`: this app is ad-hoc signed and run from an
+/// arbitrary folder, so it never registers with Notification Center and
+/// `UNUserNotificationCenter` silently drops everything. Shelling out to
+/// osascript needs no code-signing or entitlements and works for local tools.
 ///
 /// Alerts are **edge-triggered**: each (account, window) fires once when it
-/// crosses into 100% and re-arms only after it drops back below, so a window
-/// sitting at 100% across many 5-minute refreshes doesn't spam. The on/off
-/// switch is persisted in `UserDefaults`.
+/// crosses into 100% and re-arms only after it drops below, so a window sitting
+/// at 100% across many refreshes doesn't spam. On/off persists in UserDefaults.
 @MainActor
 final class Notifier: ObservableObject {
     static let shared = Notifier()
 
     private let enabledKey = "notificationsEnabled"
 
-    /// User-facing on/off. Requesting auth on enable so the first toggle
-    /// triggers the system permission prompt.
     @Published var isEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isEnabled, forKey: enabledKey)
-            if isEnabled { requestAuthorization() }
+            // Turning it on fires a test banner so the user can confirm alerts
+            // actually reach Notification Center on their machine.
+            if isEnabled && !oldValue {
+                deliver(title: "Claude Usage — alerts on",
+                        body: "You'll get a notification when an account hits 100% usage.",
+                        sound: "Ping")
+            }
         }
     }
 
-    /// Windows currently known to be at 100% (keyed "accountID|windowID"), so we
-    /// only notify on the low→100% transition.
+    /// Windows currently known to be at 100% (keyed "accountID|windowID").
     private var firedKeys: Set<String> = []
 
     private init() {
-        // Default ON, but only actually alerts once the user grants permission.
         isEnabled = UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true
-        // Assigning in init doesn't fire `didSet`, so ask for permission here
-        // when enabled — otherwise a fresh install never prompts and alerts
-        // silently never appear.
-        if isEnabled { requestAuthorization() }
     }
 
-    func requestAuthorization() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
-    /// Call after each refresh with the freshest states. Fires for any window
-    /// that just reached 100%.
+    /// Call after each refresh. Fires for any window that just reached 100%.
     func evaluate(accounts: [ConfigAccount], states: [UUID: ClaudeCode.State], title: (ConfigAccount) -> String) {
         guard isEnabled else { firedKeys.removeAll(); return }
 
@@ -51,7 +49,9 @@ final class Notifier: ObservableObject {
                 if w.fraction >= 1.0 {
                     if !firedKeys.contains(key) {
                         firedKeys.insert(key)
-                        post(account: title(account), window: w.label)
+                        deliver(title: "\(title(account)) is out of usage",
+                                body: "\(w.label) has hit 100%. New requests are blocked until it resets.",
+                                sound: "Basso")
                     }
                 } else {
                     firedKeys.remove(key)   // re-arm once it drops below 100%
@@ -60,12 +60,19 @@ final class Notifier: ObservableObject {
         }
     }
 
-    private func post(account: String, window: String) {
-        let content = UNMutableNotificationContent()
-        content.title = "\(account) is out of usage"
-        content.body = "\(window) has hit 100%. New requests will be blocked until it resets."
-        content.sound = .default
-        let req = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(req)
+    // MARK: Delivery
+
+    private func deliver(title: String, body: String, sound: String) {
+        let script = "display notification \(quote(body)) with title \(quote(title)) sound name \(quote(sound))"
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        task.arguments = ["-e", script]
+        try? task.run()
+    }
+
+    /// AppleScript string literal: wrap in quotes and escape `\` and `"`.
+    private func quote(_ s: String) -> String {
+        "\"" + s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 }
