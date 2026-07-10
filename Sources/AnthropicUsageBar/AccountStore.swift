@@ -138,6 +138,7 @@ final class AccountStore: ObservableObject {
         }
         lastUpdated = Date()
         isRefreshing = false
+        Notifier.shared.evaluate(accounts: accounts, states: states) { self.title(for: $0) }
     }
 
     // MARK: Auto-prime scheduling

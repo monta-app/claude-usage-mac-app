@@ -5,6 +5,7 @@ struct MenuContentView: View {
     @EnvironmentObject var store: AccountStore
     @Environment(\.openWindow) private var openWindow
     @StateObject private var loginItem = LoginItem.shared
+    @StateObject private var notifier = Notifier.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,12 +23,25 @@ struct MenuContentView: View {
                 }
             }
             Divider()
+            notifyRow
             loginRow
             Divider()
             footer
         }
         .frame(width: 320)
         .onAppear { loginItem.refresh() }
+    }
+
+    private var notifyRow: some View {
+        Toggle(isOn: $notifier.isEnabled) {
+            Label("Notify at 100% usage", systemImage: "bell")
+                .font(.caption)
+        }
+        .toggleStyle(.switch)
+        .controlSize(.mini)
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
     }
 
     private var loginRow: some View {
@@ -41,7 +55,8 @@ struct MenuContentView: View {
         .toggleStyle(.switch)
         .controlSize(.mini)
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.top, 2)
+        .padding(.bottom, 8)
     }
 
     private var header: some View {
