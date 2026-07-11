@@ -24,9 +24,10 @@ final class Notifier: ObservableObject {
             // Turning it on fires a test banner so the user can confirm alerts
             // actually reach Notification Center on their machine.
             if isEnabled && !oldValue {
-                deliver(title: "Claude Usage — alerts on",
-                        body: "You'll get a notification when an account hits 100% usage.",
-                        sound: "Ping")
+                // Fire the real (sticky) alert style so the user sees exactly
+                // what a 100% alert will look like.
+                alert(title: "Claude Usage",
+                      body: "Alerts are on. You'll see a dialog like this when an account hits 100% usage.")
             }
         }
     }
@@ -49,9 +50,13 @@ final class Notifier: ObservableObject {
                 if w.fraction >= 1.0 {
                     if !firedKeys.contains(key) {
                         firedKeys.insert(key)
-                        deliver(title: "\(title(account)) is out of usage",
-                                body: "\(w.label) has hit 100%. New requests are blocked until it resets.",
-                                sound: "Basso")
+                        // Sticky: a one-shot transient banner is easy to miss, and
+                        // "you're blocked" is exactly the event you must not miss.
+                        // A dialog stays on screen until dismissed. The heading
+                        // leads with the app name so the source is unmistakable
+                        // (the osascript window itself carries no app branding).
+                        alert(title: "Claude Usage",
+                              body: "\(title(account)) is out of usage.\n\n\(w.label) has hit 100%. New requests are blocked until it resets.")
                     }
                 } else {
                     firedKeys.remove(key)   // re-arm once it drops below 100%
@@ -62,8 +67,19 @@ final class Notifier: ObservableObject {
 
     // MARK: Delivery
 
-    private func deliver(title: String, body: String, sound: String) {
-        let script = "display notification \(quote(body)) with title \(quote(title)) sound name \(quote(sound))"
+    /// Sticky alert: a dialog that stays on screen until the user dismisses it,
+    /// so a "you're out of usage" alert can't be missed. Runs detached (its own
+    /// osascript process) so it never blocks refresh or another account's alert.
+    /// No `System Events` / Automation permission needed — osascript presents the
+    /// alert itself; `activate` brings it to the foreground.
+    private func alert(title: String, body: String) {
+        run("""
+        activate
+        display alert \(quote(title)) message \(quote(body)) as critical buttons {"OK"} default button "OK"
+        """)
+    }
+
+    private func run(_ script: String) {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         task.arguments = ["-e", script]

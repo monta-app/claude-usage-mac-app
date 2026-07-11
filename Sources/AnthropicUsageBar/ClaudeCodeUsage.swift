@@ -115,15 +115,17 @@ enum ClaudeCode {
         }
     }
 
-    private static let isoWithFraction: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
-    }()
-    private static let isoPlain: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
-    }()
     private static func isoDate(_ s: String?) -> Date? {
         guard let s, !s.isEmpty else { return nil }
-        return isoWithFraction.date(from: s) ?? isoPlain.date(from: s)
+        // Fresh formatters per call: ISO8601DateFormatter isn't Sendable, so a
+        // shared static instance trips strict-concurrency checks. This path runs
+        // only on refresh, so the allocation cost is irrelevant.
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: s) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: s)
     }
     private static func shortReset(_ d: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "MMM d, h:mm a"; return f.string(from: d)
