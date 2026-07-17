@@ -86,6 +86,7 @@ public final class AccountsManager {
         try? FileManager.default.createDirectory(at: baseDir.appendingPathComponent("cc", isDirectory: true),
                                                  withIntermediateDirectories: true)
         load()
+        migrateLegacyConfigDirs()
     }
 
     // MARK: Persistence
@@ -105,10 +106,85 @@ public final class AccountsManager {
     }
 
     /// Replace the entire index (used for one-time migration from the GUI's
-    /// legacy UserDefaults store). Persists immediately.
+    /// legacy UserDefaults store). Persists immediately. Does NOT relocate
+    /// credential dirs — call `migrateLegacyConfigDirs()` after.
     public func replaceAll(_ newAccounts: [ConfigAccount]) {
         accounts = newAccounts
         persist()
+    }
+
+    // MARK: Legacy path migration
+
+    /// The old GUI stored credential dirs under
+    /// `~/Library/Application Support/ClaudeUsage/cc/<uuid>/`. This moves any
+    /// account still pointing there to `~/.claude-usage/cc/<uuid>/` (the new
+    /// shared location), updates `configDir` in the index, and persists.
+    ///
+    /// Idempotent: safe to call on every launch. Accounts already at the new
+    /// path are skipped. If the old dir doesn't exist (already moved or never
+    /// had a login), the `configDir` is just repointed.
+    public func migrateLegacyConfigDirs() {
+        let oldBase = legacyCCBase()
+        let newCC = baseDir.appendingPathComponent("cc", isDirectory: true)
+        var changed = false
+
+        for i in accounts.indices {
+            let acct = accounts[i]
+            guard acct.configDir.hasPrefix(oldBase.path + "/") else { continue }
+
+            // Extract the last path component (the UUID dir name).
+            let dirName = (acct.configDir as NSString).lastPathComponent
+            let oldDir = URL(fileURLWithPath: acct.configDir)
+            let newDir = newCC.appendingPathComponent(dirName, isDirectory: true)
+
+            let oldExists = FileManager.default.fileExists(atPath: oldDir.path)
+            let newExists = FileManager.default.fileExists(atPath: newDir.path)
+
+            if oldExists && !newExists {
+                // Clean move: old has data, new doesn't. Just rename.
+                try? FileManager.default.moveItem(at: oldDir, to: newDir)
+            } else if oldExists && newExists {
+                // Both exist — unexpected (partial prior migration?). The old
+                // dir has the real credentials; replace the new one with it.
+                try? FileManager.default.removeItem(at: newDir)
+                try? FileManager.default.moveItem(at: oldDir, to: newDir)
+            }
+            // If neither exists, the dir was never created (no login yet).
+            // Either way, repoint configDir to the new location.
+
+            accounts[i].configDir = newDir.path
+            changed = true
+        }
+
+        if changed {
+            persist()
+            // Clean up the old container if it's now empty.
+            cleanupLegacyDirIfNeeded(oldBase)
+        }
+    }
+
+    /// `~/Library/Application Support/ClaudeUsage/cc/` — the old GUI's per-account
+    /// credential dir base. Used by `migrateLegacyConfigDirs` to detect accounts
+    /// that still point at the old location.
+    private func legacyCCBase() -> URL {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("ClaudeUsage/cc", isDirectory: true)
+    }
+
+    /// Remove the old `~/Library/Application Support/ClaudeUsage/` tree if the
+    /// `cc/` subdirectory is now empty (all accounts migrated). Best-effort.
+    private func cleanupLegacyDirIfNeeded(_ ccBase: URL) {
+        let legacyRoot = ccBase.deletingLastPathComponent()  // .../ClaudeUsage/
+        // Only remove if cc/ is empty or gone.
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: ccBase.path),
+              entries.isEmpty else { return }
+        try? FileManager.default.removeItem(at: ccBase)
+        // Also remove the parent if it's now empty (no other files left).
+        if let parentEntries = try? FileManager.default.contentsOfDirectory(atPath: legacyRoot.path),
+           parentEntries.isEmpty {
+            try? FileManager.default.removeItem(at: legacyRoot)
+        }
     }
 
     // MARK: Accounts
