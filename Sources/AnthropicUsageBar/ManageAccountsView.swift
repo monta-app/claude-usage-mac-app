@@ -1,4 +1,5 @@
 import SwiftUI
+import AnthropicUsageCore
 
 struct ManageAccountsView: View {
     @EnvironmentObject var store: AccountStore

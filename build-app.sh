@@ -9,8 +9,33 @@ EXE="AnthropicUsageBar"                 # SPM product / internal executable name
 DISPLAY_NAME="Claude Usage"             # user-facing name
 BUNDLE_ID="com.local.anthropicusagebar" # kept stable so Keychain grants persist
 
-echo "==> Building release binary…"
+# Embed the git short SHA into the app (and the CLI, so `ccu update` works)
+# before building. Falls back to "dev" if git is unavailable.
+SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+cat > Sources/AnthropicUsageBar/Version.swift <<SWIFT
+import Foundation
+
+enum AppVersion {
+    static let sha: String = "$SHA"
+    static let repo = "monta-app/claude-usage-mac-app"
+}
+SWIFT
+cat > Sources/ccu/Version.swift <<SWIFT
+import Foundation
+
+public enum CCUVersion {
+    public static let sha: String = "$SHA"
+    public static let repo = "monta-app/claude-usage-mac-app"
+    public static let assetName = "ccu.tar.gz"
+}
+SWIFT
+
+echo "==> Building release binary (SHA=$SHA)…"
 swift build -c release
+
+# Restore the default Version.swift files so the working tree stays clean.
+# The SHA is already baked into the built binaries.
+git checkout -- Sources/AnthropicUsageBar/Version.swift Sources/ccu/Version.swift 2>/dev/null || true
 
 APPDIR="$DISPLAY_NAME.app"
 rm -rf "$APPDIR"

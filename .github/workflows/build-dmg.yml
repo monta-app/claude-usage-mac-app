@@ -27,6 +27,22 @@ jobs:
       - name: Build DMG
         run: ./make-dmg.sh
 
+      - name: Build ccu CLI
+        run: |
+          SHA="${GITHUB_SHA:0:7}"
+          cat > Sources/ccu/Version.swift <<SWIFT
+          import Foundation
+          public enum CCUVersion {
+              public static let sha: String = "$SHA"
+              public static let repo = "monta-app/claude-usage-mac-app"
+              public static let assetName = "ccu.tar.gz"
+          }
+          SWIFT
+          swift build -c release --product ccu
+          # Zip the binary to dodge GitHub's content-type sniffing (a bare
+          # "ccu" file downloads as text in some browsers).
+          cd .build/release && tar czf ../../ccu.tar.gz ccu && cd ../..
+
       - name: Publish rolling "latest" release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,15 +50,22 @@ jobs:
           set -euo pipefail
           NOTES="Automated build from \`main\` @ ${GITHUB_SHA:0:7}.
 
-          **Install:** open the DMG and drag **Claude Usage** to Applications.
+          **Install the app:** open the DMG and drag **Claude Usage** to Applications.
 
           The app is ad-hoc signed (no Apple Developer cert), so on first launch
           macOS Gatekeeper will block it. Right-click the app → **Open** → **Open**,
-          or run \`xattr -cr \"/Applications/Claude Usage.app\"\` once."
+          or run \`xattr -cr \"/Applications/Claude Usage.app\"\` once.
 
-          # Recreate the 'latest' release so the asset is always the newest build.
+          **Install the CLI (ccu):**
+          \`\`\`bash
+          curl -fsSL https://github.com/monta-app/claude-usage-mac-app/releases/latest/download/ccu.tar.gz | tar xz -C ~/.local/bin
+          chmod +x ~/.local/bin/ccu
+          \`\`\`
+          Then run \`ccu --version\` and \`ccu login <name>\`."
+
+          # Recreate the 'latest' release so the assets are always the newest build.
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest "Claude-Usage.dmg" \
+          gh release create latest "Claude-Usage.dmg" "ccu.tar.gz" \
             --title "Latest build" \
             --notes "$NOTES" \
             --latest
