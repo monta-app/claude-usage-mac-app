@@ -149,10 +149,11 @@ public enum ClaudeCode {
     public struct Identity: Equatable, Sendable {
         public var email: String?
         public var orgName: String?
-        /// Best label for display: email, else org name.
-        public var label: String? { email ?? orgName }
-        public init(email: String? = nil, orgName: String? = nil) {
-            self.email = email; self.orgName = orgName
+        public var subscriptionType: String?
+        /// Best label for display: email, else org name, else subscription type.
+        public var label: String? { email ?? orgName ?? subscriptionType }
+        public init(email: String? = nil, orgName: String? = nil, subscriptionType: String? = nil) {
+            self.email = email; self.orgName = orgName; self.subscriptionType = subscriptionType
         }
     }
 
@@ -175,6 +176,10 @@ public enum ClaudeCode {
         task.environment = env
         task.currentDirectoryURL = URL(fileURLWithPath: neutralWorkdir())
         let out = Pipe(); task.standardOutput = out; task.standardError = Pipe()
+        // Attach /dev/null to stdin so the child never blocks waiting on the
+        // terminal when ccu is run interactively (claude auth status / claude
+        // -p both probe isatty(stdin) and may block on read).
+        task.standardInput = Pipe()
         do { try task.run() } catch { return nil }
         let deadline = DispatchTime.now() + 20
         let killer = DispatchWorkItem { if task.isRunning { task.terminate() } }
@@ -182,7 +187,9 @@ public enum ClaudeCode {
         let data = out.fileHandleForReading.readDataToEndOfFile()
         task.waitUntilExit(); killer.cancel()
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return Identity(email: root["email"] as? String, orgName: root["orgName"] as? String)
+        return Identity(email: root["email"] as? String,
+                        orgName: root["orgName"] as? String,
+                        subscriptionType: root["subscriptionType"] as? String)
     }
 
     /// Start (prime) the 5h rolling window for a login by sending one minimal
@@ -206,6 +213,7 @@ public enum ClaudeCode {
         task.environment = env
         task.currentDirectoryURL = URL(fileURLWithPath: neutralWorkdir())
         task.standardOutput = Pipe(); task.standardError = Pipe()
+        task.standardInput = Pipe()
         do { try task.run() } catch { return false }
         let deadline = DispatchTime.now() + 60
         let killer = DispatchWorkItem { if task.isRunning { task.terminate() } }
@@ -264,6 +272,7 @@ public enum ClaudeCode {
         let out = Pipe()
         task.standardOutput = out
         task.standardError = Pipe()
+        task.standardInput = Pipe()
 
         do { try task.run() } catch { return .error("Couldn't run claude: \(error.localizedDescription)") }
 

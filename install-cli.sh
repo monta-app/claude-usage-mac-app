@@ -18,21 +18,26 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Embed the git short SHA into the binary so `ccu update` can compare against
-# the rolling "latest" release. Falls back to "dev" if git is unavailable.
+# Embed the git short SHA + version into the binary so `ccu update` can
+# compare against the rolling "latest" release. Falls back to "dev" if git
+# is unavailable. Local builds use 1.<commit-count>-dev (the authoritative
+# N is only computed in CI, where it can query GitHub).
 SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+N="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+VERSION="1.${N}-dev"
 
 cat > Sources/ccu/Version.swift <<SWIFT
 import Foundation
 
 public enum CCUVersion {
     public static let sha: String = "$SHA"
+    public static let version: String = "$VERSION"
     public static let repo = "monta-app/claude-usage-mac-app"
     public static let assetName = "ccu.tar.gz"
 }
 SWIFT
 
-echo "==> Building ccu (SHA=$SHA)…"
+echo "==> Building ccu (SHA=$SHA VERSION=$VERSION)…"
 swift build -c release
 
 # Restore the default Version.swift so the working tree stays clean. The

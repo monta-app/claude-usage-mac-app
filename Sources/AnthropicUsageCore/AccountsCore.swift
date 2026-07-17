@@ -11,9 +11,27 @@ public struct ConfigAccount: Identifiable, Codable, Equatable, Sendable {
     public var configDir: String
     /// Optional daily auto-prime schedule. nil / disabled = off.
     public var schedule: PrimeSchedule?
+    /// Cached identity (email/org) from the last `claude auth status` fetch.
+    /// Avoids the ~2-5s Node.js subprocess on every `ccu list`. Refreshed on
+    /// login and on explicit `ccu list --refresh-identity`.
+    public var cachedEmail: String?
+    public var cachedOrgName: String?
+    public var cachedSubscriptionType: String?
 
-    public init(id: UUID = UUID(), name: String, configDir: String, schedule: PrimeSchedule? = nil) {
+    public init(id: UUID = UUID(), name: String, configDir: String,
+                schedule: PrimeSchedule? = nil,
+                cachedEmail: String? = nil, cachedOrgName: String? = nil,
+                cachedSubscriptionType: String? = nil) {
         self.id = id; self.name = name; self.configDir = configDir; self.schedule = schedule
+        self.cachedEmail = cachedEmail; self.cachedOrgName = cachedOrgName
+        self.cachedSubscriptionType = cachedSubscriptionType
+    }
+
+    /// The cached identity as a `ClaudeCode.Identity`, if any.
+    public var cachedIdentity: ClaudeCode.Identity? {
+        guard cachedEmail != nil || cachedOrgName != nil || cachedSubscriptionType != nil else { return nil }
+        return ClaudeCode.Identity(email: cachedEmail, orgName: cachedOrgName,
+                                   subscriptionType: cachedSubscriptionType)
     }
 }
 
@@ -259,14 +277,32 @@ public final class AccountsManager {
 
     private static func refreshOne(_ a: ConfigAccount) async -> RefreshResult {
         await CredentialFile.refreshIfNeeded(a.configDir)
-        async let ident = ClaudeCode.fetchIdentity(configDir: a.configDir, token: nil)
+        // Use the cached identity if present (avoids a ~5s `claude auth status`
+        // Node.js subprocess per account on every refresh). The cache is
+        // populated at login and via `ccu list --refresh-identity`.
+        let ident = a.cachedIdentity
         let state: ClaudeCode.State
         if let token = CredentialFile.accessToken(a.configDir) {
             state = await ClaudeCode.fetchViaToken(token)
         } else {
             state = await ClaudeCode.fetchUsage(configDir: a.configDir)
         }
-        return RefreshResult(state: state, identity: await ident)
+        return RefreshResult(state: state, identity: ident)
+    }
+
+    /// Fetch identity for an account via `claude auth status` and cache it in
+    /// the account index. Expensive (~5s Node.js subprocess) so only run on
+    /// login and on explicit request.
+    @discardableResult
+    public func refreshIdentity(_ account: ConfigAccount) async -> ClaudeCode.Identity? {
+        let ident = await ClaudeCode.fetchIdentity(configDir: account.configDir, token: nil)
+        guard let i = ident else { return nil }
+        guard let idx = accounts.firstIndex(where: { $0.id == account.id }) else { return ident }
+        accounts[idx].cachedEmail = i.email
+        accounts[idx].cachedOrgName = i.orgName
+        accounts[idx].cachedSubscriptionType = i.subscriptionType
+        persist()
+        return ident
     }
 
     // MARK: Session prime
