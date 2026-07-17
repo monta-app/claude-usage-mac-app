@@ -179,7 +179,7 @@ public enum ClaudeCode {
         // Attach /dev/null to stdin so the child never blocks waiting on the
         // terminal when ccu is run interactively (claude auth status / claude
         // -p both probe isatty(stdin) and may block on read).
-        task.standardInput = Pipe()
+        task.standardInput = devNullStdin
         do { try task.run() } catch { return nil }
         let deadline = DispatchTime.now() + 20
         let killer = DispatchWorkItem { if task.isRunning { task.terminate() } }
@@ -213,7 +213,7 @@ public enum ClaudeCode {
         task.environment = env
         task.currentDirectoryURL = URL(fileURLWithPath: neutralWorkdir())
         task.standardOutput = Pipe(); task.standardError = Pipe()
-        task.standardInput = Pipe()
+        task.standardInput = devNullStdin
         do { try task.run() } catch { return false }
         let deadline = DispatchTime.now() + 60
         let killer = DispatchWorkItem { if task.isRunning { task.terminate() } }
@@ -230,6 +230,21 @@ public enum ClaudeCode {
     }
 
     // MARK: Implementation
+
+    /// A `/dev/null` stdin for subprocesses. Prevents `claude auth status` /
+    /// `claude -p` from detecting a TTY on stdin and blocking on a read()
+    /// when ccu is run from an interactive terminal. Uses /dev/null directly
+    /// (a Pipe() doesn't work — the write end stays open in the parent so the
+    /// child blocks waiting for data that never arrives).
+    static let devNullStdin: FileHandle = {
+        FileHandle(forReadingAtPath: "/dev/null") ?? {
+            // Extremely unlikely (no /dev/null on this system). Fall back to
+            // a pipe with the write end closed so the child gets EOF.
+            let p = Pipe()
+            p.fileHandleForWriting.closeFile()
+            return p.fileHandleForReading
+        }()
+    }()
 
     /// A stable, app-owned empty directory to run the CLI in — avoids touching
     /// the user's Documents/home (which triggers a macOS access prompt). Now
@@ -272,7 +287,7 @@ public enum ClaudeCode {
         let out = Pipe()
         task.standardOutput = out
         task.standardError = Pipe()
-        task.standardInput = Pipe()
+        task.standardInput = devNullStdin
 
         do { try task.run() } catch { return .error("Couldn't run claude: \(error.localizedDescription)") }
 
