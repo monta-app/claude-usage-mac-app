@@ -49,21 +49,37 @@ final class AccountStore: ObservableObject {
 
     private func migrateFromUserDefaultsIfNeeded() {
         let indexURL = manager.baseDir.appendingPathComponent("accounts.json")
-        guard !FileManager.default.fileExists(atPath: indexURL.path) else { return }
+        let indexExists = FileManager.default.fileExists(atPath: indexURL.path)
 
-        if let data = UserDefaults.standard.data(forKey: Self.legacyKey),
-           let decoded = try? JSONDecoder().decode([ConfigAccount].self, from: data),
-           !decoded.isEmpty {
-            manager.replaceAll(decoded)
-            return
-        }
-        // v1 had an optional configDir (only file-based accounts were kept).
-        if let data = UserDefaults.standard.data(forKey: Self.legacyKeyV1),
-           let old = try? JSONDecoder().decode([LegacyAccount].self, from: data) {
-            let mapped = old.compactMap { l in
-                l.configDir.map { ConfigAccount(id: l.id, name: l.name, configDir: $0) }
+        // Import the index from UserDefaults if the new JSON index doesn't
+        // exist yet (first run of the new app on this machine). The imported
+        // configDirs still point at the old Library/Application Support path;
+        // migrateLegacyConfigDirs() (called below + in AccountsManager.init)
+        // relocates the credential dirs and repoints them.
+        if !indexExists {
+            if let data = UserDefaults.standard.data(forKey: Self.legacyKey),
+               let decoded = try? JSONDecoder().decode([ConfigAccount].self, from: data),
+               !decoded.isEmpty {
+                manager.replaceAll(decoded)
+                manager.migrateLegacyConfigDirs()
+                return
             }
-            if !mapped.isEmpty { manager.replaceAll(mapped) }
+            // v1 had an optional configDir (only file-based accounts were kept).
+            if let data = UserDefaults.standard.data(forKey: Self.legacyKeyV1),
+               let old = try? JSONDecoder().decode([LegacyAccount].self, from: data) {
+                let mapped = old.compactMap { l in
+                    l.configDir.map { ConfigAccount(id: l.id, name: l.name, configDir: $0) }
+                }
+                if !mapped.isEmpty {
+                    manager.replaceAll(mapped)
+                    manager.migrateLegacyConfigDirs()
+                }
+            }
+        } else {
+            // Index already exists (e.g. created by PR#1's partial migration,
+            // which moved the index but not the credential dirs). Make sure any
+            // accounts still pointing at the old path are relocated.
+            manager.migrateLegacyConfigDirs()
         }
     }
 

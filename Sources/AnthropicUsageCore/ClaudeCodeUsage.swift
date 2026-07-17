@@ -224,11 +224,11 @@ public enum ClaudeCode {
     // MARK: Implementation
 
     /// A stable, app-owned empty directory to run the CLI in — avoids touching
-    /// the user's Documents/home (which triggers a macOS access prompt).
+    /// the user's Documents/home (which triggers a macOS access prompt). Now
+    /// lives under the shared ~/.claude-usage/run dir for consistency.
     static func neutralWorkdir() -> String {
-        let dir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("AnthropicUsageBar/run", isDirectory: true)
+        let dir = AccountsManager.defaultBaseDir()
+            .appendingPathComponent("run", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.path
     }
