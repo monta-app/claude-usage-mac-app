@@ -17,11 +17,30 @@ struct CCU: AsyncParsableCommand {
         commandName: "ccu",
         abstract: "Manage multiple Claude Code accounts and view plan usage (SSH-friendly).",
         version: "ccu \(CCUVersion.version) (\(CCUVersion.sha))",
+        // Order matters for `ccu --help`: most-used first, setup/admin last.
+        // Group logically: see → switch → manage → per-shell → automation → setup.
         subcommands: [
-            List.self, Add.self, Login.self, Usage.self, Refresh.self,
-            Prime.self, Env.self, Switch.self, Current.self, Init.self,
-            Use.self, Rename.self, Remove.self, Schedule.self, Run.self,
-            Update.self
+            // Everyday
+            List.self,        // see all accounts + usage
+            Current.self,    // which is active
+            Switch.self,      // switch (all terminals)
+            Usage.self,      // single-account detail
+            // Account management
+            Add.self,         // add a slot
+            Login.self,       // log in
+            Rename.self,      // rename
+            Remove.self,      // delete
+            // Per-shell / one-shot
+            Env.self,         // export line for sourcing
+            Use.self,         // run a command under an account
+            // Automation (cron)
+            Prime.self,       // kick off a 5h session now
+            Schedule.self,    // configure daily auto-prime
+            Run.self,         // one scheduler tick
+            Refresh.self,     // keep tokens alive
+            // Setup / admin
+            Init.self,        // install shell hook
+            Update.self,      // self-update from GitHub
         ]
     )
 
