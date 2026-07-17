@@ -1,4 +1,4 @@
-name: Build DMG
+name: Release
 
 on:
   push:
@@ -27,12 +27,31 @@ jobs:
       - name: Build DMG
         run: ./make-dmg.sh
 
+      - name: Compute version (1.<N>, N = previous + 1)
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Find the highest existing v1.<N> tag and bump by 1. If none exist
+          # (fresh start), begin at 1. Old date-based tags from the previous
+          # scheme are ignored — they stay as historical artifacts.
+          PRIOR=$(gh release list --limit 100 --json tagName \
+            | jq -r '.[].tagName' \
+            | grep -E '^v1\.[0-9]+$' \
+            | sed 's/v1\.//' \
+            | sort -n \
+            | tail -1 || true)
+          N=$((PRIOR + 1))
+          VERSION="1.${N}"
+          echo "Computed VERSION=$VERSION (prior N=${PRIOR:-none})"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
       - name: Build ccu CLI
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           SHA="${GITHUB_SHA:0:7}"
-          # Date-based version: YYYYMMDD-HHMMSS-<short-sha>. Monotonic across
-          # builds, human-readable, sortable, and identifies the commit.
-          VERSION="$(date -u +%Y%m%d-%H%M%S)-${SHA}"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "SHA=$SHA" >> "$GITHUB_ENV"
 
@@ -68,7 +87,7 @@ jobs:
           set -euo pipefail
           ls -la Claude-Usage.dmg ccu.tar.gz
 
-          NOTES="Automated build from \`main\` @ ${SHA}.
+          NOTES="Build \`$VERSION\` from \`main\` @ ${SHA}.
 
           **Install the app:** open the DMG and drag **Claude Usage** to Applications.
 
@@ -87,7 +106,7 @@ jobs:
           #    /releases/latest/download/ URLs always point at the newest build).
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
           gh release create latest Claude-Usage.dmg ccu.tar.gz \
-            --title "Latest build ($VERSION)" \
+            --title "Latest build (v$VERSION)" \
             --notes "$NOTES" \
             --latest
 
@@ -95,6 +114,6 @@ jobs:
           #    and downloadable by version. Use the version as the tag so
           #    `ccu update` can point at a specific one if needed.
           gh release create "v$VERSION" Claude-Usage.dmg ccu.tar.gz \
-            --title "Build $VERSION" \
+            --title "Build v$VERSION" \
             --notes "$NOTES" \
             --target "$GITHUB_SHA"

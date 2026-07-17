@@ -9,11 +9,16 @@ EXE="AnthropicUsageBar"                 # SPM product / internal executable name
 DISPLAY_NAME="Claude Usage"             # user-facing name
 BUNDLE_ID="com.local.anthropicusagebar" # kept stable so Keychain grants persist
 
-# Embed the git short SHA + date-based version into the app and CLI before
-# building, so `ccu update` and the app's update checker can compare against
-# the latest GitHub release. Falls back to "dev" if git is unavailable.
+# Embed the git short SHA + version into the app and CLI before building, so
+# `ccu update` and the app's update checker can compare against the latest
+# GitHub release. Falls back to "dev" if git is unavailable.
+#
+# CI uses `1.<N>` where N is the prior release's N + 1 (queried from GitHub).
+# For local builds we approximate N with the commit count on HEAD — close
+# enough for dev; the real N is only authoritative in CI.
 SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
-VERSION="$(date -u +%Y%m%d-%H%M%S)-${SHA}"
+N="$(git rev-list --count HEAD 2>/dev/null || echo 0)"
+VERSION="1.${N}-dev"
 cat > Sources/AnthropicUsageBar/Version.swift <<SWIFT
 import Foundation
 
