@@ -19,8 +19,9 @@ struct CCU: AsyncParsableCommand {
         version: "ccu \(CCUVersion.version) (\(CCUVersion.sha))",
         subcommands: [
             List.self, Add.self, Login.self, Usage.self, Refresh.self,
-            Prime.self, Env.self, Use.self, Rename.self, Remove.self,
-            Schedule.self, Run.self, Update.self
+            Prime.self, Env.self, Switch.self, Current.self, Init.self,
+            Use.self, Rename.self, Remove.self, Schedule.self, Run.self,
+            Update.self
         ]
     )
 
@@ -46,11 +47,17 @@ extension CCU {
         static let configuration = CommandConfiguration(
             commandName: "list", abstract: "List accounts and current usage bars.")
 
+        @Flag(name: .long, help: "Re-fetch account identities via `claude auth status` (slow; otherwise cached).")
+        var refreshIdentity = false
+
         func run() async throws {
             let m = CCU.manager()
             if m.accounts.isEmpty {
                 print("No accounts yet. Add one with: ccu login <name>")
                 return
+            }
+            if refreshIdentity {
+                for a in m.accounts { _ = await m.refreshIdentity(a) }
             }
             let results = await m.refreshAll()
             for (i, a) in m.accounts.enumerated() {
@@ -65,20 +72,43 @@ extension CCU {
 // MARK: - add
 
 extension CCU {
-    struct Add: ParsableCommand {
+    struct Add: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
-            commandName: "add", abstract: "Create an empty account slot (no login yet).")
+            commandName: "add",
+            abstract: "Create an account slot. Use --current to capture the login you're already using.")
 
         @Argument var name: String
 
-        func run() throws {
+        @Flag(name: .long, help: "Capture the current default login (~/.claude/.credentials.json) into this account's dir. No re-authentication needed.")
+        var current = false
+
+        func run() async throws {
             let m = CCU.manager()
             if m.find(name) != nil {
                 throw ValidationError("An account named \"\(name)\" already exists.")
             }
             let a = m.add(name: name)
-            print("Added \"\(name)\". Log in with: ccu login \(name)")
-            print("  config dir: \(a.configDir)")
+
+            if current {
+                let defaultCreds = NSString(string: NSHomeDirectory()).appendingPathComponent(".claude/.credentials.json")
+                guard FileManager.default.fileExists(atPath: defaultCreds) else {
+                    print("Added \"\(name)\" but no default login found at ~/.claude/.credentials.json.")
+                    print("Log in with: ccu login \(name)")
+                    return
+                }
+                let dest = a.configDir + "/.credentials.json"
+                try FileManager.default.copyItem(atPath: defaultCreds, toPath: dest)
+                print("Added \"\(name)\" — captured login from ~/.claude/.credentials.json.")
+                print("  config dir: \(a.configDir)")
+                print("  Use it with: eval \"$(ccu env \(name))\"")
+                // Fetch identity in the background so we don't block. The cache
+                // will be populated for the next `ccu list`. Run `ccu list
+                // --refresh-identity` if you want it immediately.
+                Task { _ = await m.refreshIdentity(a) }
+            } else {
+                print("Added \"\(name)\". Log in with: ccu login \(name)")
+                print("  config dir: \(a.configDir)")
+            }
         }
     }
 }
@@ -93,14 +123,19 @@ extension CCU {
 
         @Argument var name: String
 
-        func run() throws {
+        func run() async throws {
             let m = CCU.manager()
             let account = m.find(name) ?? m.add(name: name)
             print("Logging in as \"\(name)\" into \(account.configDir)")
             print("Open the printed URL in a browser, then come back here.\n")
             let env = ["CLAUDE_CONFIG_DIR": account.configDir]
             let status = Shell.exec(command: "claude", arguments: ["/login"], env: env)
-            throw ExitCode(status)
+            guard status == 0 else { throw ExitCode(status) }
+            // Cache the identity so `ccu list` doesn't have to re-fetch it
+            // (a ~5s Node.js subprocess) on every invocation.
+            if let ident = await m.refreshIdentity(account) {
+                print("\n✅ Logged in as \(ident.label ?? name).")
+            }
         }
     }
 }
@@ -121,7 +156,19 @@ extension CCU {
                 let r = await m.refresh(a)
                 Printers.account(a, state: r.state, identity: r.identity)
             } else {
-                try await List().run()
+                // No name → show all. Inline rather than delegating to List()
+                // (which has its own @Flag/Argument properties that can't be
+                // constructed empty).
+                if m.accounts.isEmpty {
+                    print("No accounts yet. Add one with: ccu login <name>")
+                    return
+                }
+                let results = await m.refreshAll()
+                for (i, a) in m.accounts.enumerated() {
+                    if i > 0 { print() }
+                    let r = results[a.id]
+                    Printers.account(a, state: r?.state, identity: r?.identity)
+                }
             }
         }
     }
@@ -194,6 +241,122 @@ extension CCU {
                 print("export CLAUDE_CONFIG_DIR=\(Shell.quote(a.configDir))")
             }
         }
+    }
+}
+
+// MARK: - switch (global, all terminals via a precmd hook)
+
+extension CCU {
+    /// Switch the active account globally. Writes the account's configDir to
+    /// `~/.claude-usage/active`; the zsh precmd hook (installed via
+    /// `ccu init zsh`) re-reads it on every prompt, so every open terminal
+    /// picks up the change at its next prompt render (~instant).
+    struct Switch: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "switch",
+            abstract: "Switch the active account globally (all terminals). Run `ccu init zsh` once to enable.")
+
+        @Argument var name: String?
+
+        @Flag(name: .long, help: "Switch back to the default ~/.claude login (no CLAUDE_CONFIG_DIR).")
+        var off = false
+
+        func run() throws {
+            let m = CCU.manager()
+            let marker = m.baseDir.appendingPathComponent("active")
+
+            if off || name == nil {
+                try? FileManager.default.removeItem(at: marker)
+                print("Switched to default (~/.claude). New prompts in every terminal will pick this up.")
+                return
+            }
+            guard let n = name, let a = m.find(n) else {
+                throw ValidationError("No account named \"\(name ?? "")\". Known: \(m.accounts.map(\.name).joined(separator: ", "))")
+            }
+            try a.configDir.write(to: marker, atomically: true, encoding: .utf8)
+            print("Switched to \"\(a.name)\". New prompts in every terminal will pick this up.")
+            print("  CLAUDE_CONFIG_DIR=\(a.configDir)")
+            if CredentialFile.exists(a.configDir) == false {
+                print("  ⚠️ no login in this account yet — run: ccu login \(a.name)")
+            }
+        }
+    }
+}
+
+// MARK: - current
+
+extension CCU {
+    /// Print which account is currently active (per the global marker file),
+    /// or "default" if none is set. Reads the same file the precmd hook reads.
+    struct Current: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "current", abstract: "Print the currently active account name (or 'default').")
+
+        func run() throws {
+            let m = CCU.manager()
+            let marker = m.baseDir.appendingPathComponent("active")
+            guard let dir = try? String(contentsOf: marker, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
+                  let acct = m.accounts.first(where: { $0.configDir == dir }) else {
+                print("default")
+                return
+            }
+            print(acct.name)
+        }
+    }
+}
+
+// MARK: - init (shell integration hook)
+
+extension CCU {
+    /// Print the shell hook so `eval "$(ccu init zsh)"` (or appending to
+    /// .zshrc) wires up the precmd that makes `ccu switch` apply to every
+    /// open terminal. The hook is tiny and idempotent.
+    struct Init: ParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "init",
+            abstract: "Print shell integration hook. Usage: eval \"$(ccu init zsh)\" or add to ~/.zshrc.")
+
+        @Argument var shell: String
+
+        func run() throws {
+            switch shell.lowercased() {
+            case "zsh":
+                print(Self.zshHook)
+            case "bash":
+                print(Self.bashHook)
+            default:
+                throw ValidationError("Unsupported shell: \(shell). Use 'zsh' or 'bash'.")
+            }
+        }
+
+        static let zshHook = """
+        # ccu shell integration — `eval "$(ccu init zsh)"` or add to ~/.zshrc
+        _ccu_precmd() {
+          local f="$HOME/.claude-usage/active"
+          if [[ -f "$f" ]]; then
+            local d="$(cat "$f")"
+            [[ -n "$d" ]] && export CLAUDE_CONFIG_DIR="$d" || unset CLAUDE_CONFIG_DIR
+          else
+            unset CLAUDE_CONFIG_DIR
+          fi
+        }
+        autoload -Uz add-zsh-hook
+        add-zsh-hook precmd _ccu_precmd
+        """
+
+        static let bashHook = """
+        # ccu shell integration — add to ~/.bashrc
+        _ccu_precmd() {
+          local f="$HOME/.claude-usage/active"
+          if [[ -f "$f" ]]; then
+            local d="$(cat "$f")"
+            [[ -n "$d" ]] && export CLAUDE_CONFIG_DIR="$d" || unset CLAUDE_CONFIG_DIR
+          else
+            unset CLAUDE_CONFIG_DIR
+          fi
+        }
+        PROMPT_COMMAND="_ccu_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+        """
     }
 }
 
@@ -495,9 +658,20 @@ enum Shell {
 
 enum Printers {
     static func account(_ a: ConfigAccount, state: ClaudeCode.State?, identity: ClaudeCode.Identity?) {
-        let title = identity?.label ?? a.name
-        print(title)
-        let cred = CredentialFile.exists(a.configDir) ? "" : "  (no login — run: ccu login \(a.name))"
+        // Always lead with the account name the user chose. Identity (email
+        // / org / subscription type) is shown as a subtitle if it adds info
+        // the name doesn't already convey.
+        print(a.name)
+        if let identity {
+            let extras = [identity.email, identity.orgName].compactMap { $0 }
+            if !extras.isEmpty {
+                print("  \(extras.joined(separator: " · "))")
+            }
+            if let sub = identity.subscriptionType, !sub.isEmpty {
+                print("  plan: \(sub)")
+            }
+        }
+        let cred = CredentialFile.exists(a.configDir) ? "" : "    (no login — run: ccu login \(a.name))"
         if !cred.isEmpty { print(cred); return }
 
         guard let state else {
