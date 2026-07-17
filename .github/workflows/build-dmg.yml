@@ -30,25 +30,45 @@ jobs:
       - name: Build ccu CLI
         run: |
           SHA="${GITHUB_SHA:0:7}"
+          # Date-based version: YYYYMMDD-HHMMSS-<short-sha>. Monotonic across
+          # builds, human-readable, sortable, and identifies the commit.
+          VERSION="$(date -u +%Y%m%d-%H%M%S)-${SHA}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+
           cat > Sources/ccu/Version.swift <<SWIFT
           import Foundation
           public enum CCUVersion {
               public static let sha: String = "$SHA"
+              public static let version: String = "$VERSION"
               public static let repo = "monta-app/claude-usage-mac-app"
               public static let assetName = "ccu.tar.gz"
           }
           SWIFT
+          cat > Sources/AnthropicUsageBar/Version.swift <<SWIFT
+          import Foundation
+          enum AppVersion {
+              static let sha: String = "$SHA"
+              static let version: String = "$VERSION"
+              static let repo = "monta-app/claude-usage-mac-app"
+          }
+          SWIFT
           swift build -c release --product ccu
-          # Zip the binary to dodge GitHub's content-type sniffing (a bare
-          # "ccu" file downloads as text in some browsers).
-          cd .build/release && tar czf ../../ccu.tar.gz ccu && cd ../..
+          # Tar the binary from the repo root so the archive contains a bare
+          # `ccu` entry. -C changes dir for tar only — no cd dance to undo.
+          tar czf ccu.tar.gz -C .build/release ccu
+          echo "=== verifying ccu.tar.gz ==="
+          ls -la ccu.tar.gz
+          tar tzf ccu.tar.gz
 
-      - name: Publish rolling "latest" release
+      - name: Publish rolling "latest" release + tagged version release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          NOTES="Automated build from \`main\` @ ${GITHUB_SHA:0:7}.
+          ls -la Claude-Usage.dmg ccu.tar.gz
+
+          NOTES="Automated build from \`main\` @ ${SHA}.
 
           **Install the app:** open the DMG and drag **Claude Usage** to Applications.
 
@@ -63,9 +83,18 @@ jobs:
           \`\`\`
           Then run \`ccu --version\` and \`ccu login <name>\`."
 
-          # Recreate the 'latest' release so the assets are always the newest build.
+          # 1) Update the rolling "latest" release (rebuilt every push so the
+          #    /releases/latest/download/ URLs always point at the newest build).
           gh release delete latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create latest "Claude-Usage.dmg" "ccu.tar.gz" \
-            --title "Latest build" \
+          gh release create latest Claude-Usage.dmg ccu.tar.gz \
+            --title "Latest build ($VERSION)" \
             --notes "$NOTES" \
             --latest
+
+          # 2) Also publish a tagged release so old builds are kept forever
+          #    and downloadable by version. Use the version as the tag so
+          #    `ccu update` can point at a specific one if needed.
+          gh release create "v$VERSION" Claude-Usage.dmg ccu.tar.gz \
+            --title "Build $VERSION" \
+            --notes "$NOTES" \
+            --target "$GITHUB_SHA"

@@ -16,7 +16,7 @@ struct CCU: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ccu",
         abstract: "Manage multiple Claude Code accounts and view plan usage (SSH-friendly).",
-        version: "ccu \(CCUVersion.sha)",
+        version: "ccu \(CCUVersion.version) (\(CCUVersion.sha))",
         subcommands: [
             List.self, Add.self, Login.self, Usage.self, Refresh.self,
             Prime.self, Env.self, Use.self, Rename.self, Remove.self,

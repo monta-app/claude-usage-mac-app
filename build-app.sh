@@ -9,14 +9,17 @@ EXE="AnthropicUsageBar"                 # SPM product / internal executable name
 DISPLAY_NAME="Claude Usage"             # user-facing name
 BUNDLE_ID="com.local.anthropicusagebar" # kept stable so Keychain grants persist
 
-# Embed the git short SHA into the app (and the CLI, so `ccu update` works)
-# before building. Falls back to "dev" if git is unavailable.
+# Embed the git short SHA + date-based version into the app and CLI before
+# building, so `ccu update` and the app's update checker can compare against
+# the latest GitHub release. Falls back to "dev" if git is unavailable.
 SHA="$(git rev-parse --short HEAD 2>/dev/null || echo dev)"
+VERSION="$(date -u +%Y%m%d-%H%M%S)-${SHA}"
 cat > Sources/AnthropicUsageBar/Version.swift <<SWIFT
 import Foundation
 
 enum AppVersion {
     static let sha: String = "$SHA"
+    static let version: String = "$VERSION"
     static let repo = "monta-app/claude-usage-mac-app"
 }
 SWIFT
@@ -25,12 +28,13 @@ import Foundation
 
 public enum CCUVersion {
     public static let sha: String = "$SHA"
+    public static let version: String = "$VERSION"
     public static let repo = "monta-app/claude-usage-mac-app"
     public static let assetName = "ccu.tar.gz"
 }
 SWIFT
 
-echo "==> Building release binary (SHA=$SHA)…"
+echo "==> Building release binary (SHA=$SHA VERSION=$VERSION)…"
 swift build -c release
 
 # Restore the default Version.swift files so the working tree stays clean.
