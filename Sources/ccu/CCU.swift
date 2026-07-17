@@ -586,11 +586,23 @@ extension CCU {
                 return
             }
 
-            let exePath = CommandLine.arguments.first ?? ""
-            guard !exePath.isEmpty, exePath != "/" else {
-                throw ValidationError("Couldn't resolve the ccu binary path (\(exePath)).")
+            // Resolve the real executable path. `CommandLine.arguments.first`
+            // (argv[0]) is whatever the shell passed — often just "ccu" when
+            // invoked from PATH, which would replace ./ccu in the CWD instead
+            // of the installed binary. Use `_NSGetExecutablePath` (macOS) to
+            // get the actual path the kernel loaded.
+            var exeSize: UInt32 = UInt32(PATH_MAX)
+            var exeBuf = [CChar](repeating: 0, count: Int(PATH_MAX))
+            let rc = exeBuf.withUnsafeMutableBufferPointer { ptr -> Int32 in
+                guard let base = ptr.baseAddress else { return -1 }
+                return _NSGetExecutablePath(base, &exeSize)
             }
-            let exeURL = URL(fileURLWithPath: exePath)
+            guard rc == 0 else {
+                throw ValidationError("Couldn't resolve the ccu binary path (_NSGetExecutablePath rc=\(rc)).")
+            }
+            let raw = String(cString: exeBuf)
+            let exeURL = URL(fileURLWithPath: raw).resolvingSymlinksInPath()
+            let exePath = exeURL.path
 
             if dryRun {
                 print("Dry run: would download \(downloadURLString) and replace \(exePath).")
