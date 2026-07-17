@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import AnthropicUsageCore
 
 /// Posts a notification when an account's usage window hits 100%.
 ///

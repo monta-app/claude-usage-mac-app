@@ -1,11 +1,13 @@
 import SwiftUI
 import AppKit
+import AnthropicUsageCore
 
 struct MenuContentView: View {
     @EnvironmentObject var store: AccountStore
     @Environment(\.openWindow) private var openWindow
     @StateObject private var loginItem = LoginItem.shared
     @StateObject private var notifier = Notifier.shared
+    @StateObject private var updater = UpdateChecker.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -185,6 +187,9 @@ struct MenuContentView: View {
         HStack {
             Text("Updated \(Format.relative(store.lastUpdated))").font(.caption).foregroundStyle(.secondary)
             Spacer()
+            Button("Check for Updates…") { updater.checkNow() }
+                .buttonStyle(.borderless).font(.caption)
+                .help("Check GitHub for a newer build of this app")
             Button("Manage…") { NSApp.activate(ignoringOtherApps: true); openWindow(id: "manage") }
                 .buttonStyle(.borderless)
             Button("Quit") { NSApp.terminate(nil) }.buttonStyle(.borderless)

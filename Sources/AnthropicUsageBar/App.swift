@@ -40,5 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             LoginItem.shared.refresh()
         }
+
+        // Background update check (non-blocking). Surfaces a notification only
+        // when a newer build than the baked-in SHA is found.
+        Task { await UpdateChecker.shared.check() }
     }
 }

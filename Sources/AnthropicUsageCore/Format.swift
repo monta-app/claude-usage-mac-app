@@ -1,11 +1,11 @@
 import Foundation
 
-enum Format {
-    static func usd(_ v: Double) -> String {
+public enum Format {
+    public static func usd(_ v: Double) -> String {
         String(format: "$%.2f", v)
     }
 
-    static func tokens(_ n: Int) -> String {
+    public static func tokens(_ n: Int) -> String {
         let d = Double(n)
         switch n {
         case 1_000_000_000...:
@@ -21,7 +21,7 @@ enum Format {
 
     /// Reset clock time in the user's LOCAL timezone. Same-day → "3:00 PM";
     /// otherwise "Jul 12, 12:00 PM".
-    static func clock(_ date: Date) -> String {
+    public static func clock(_ date: Date) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = .current
@@ -29,7 +29,7 @@ enum Format {
         return f.string(from: date)
     }
 
-    static func relative(_ date: Date?) -> String {
+    public static func relative(_ date: Date?) -> String {
         guard let date else { return "never" }
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
@@ -37,6 +37,6 @@ enum Format {
     }
 }
 
-extension String {
+public extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }

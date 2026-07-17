@@ -1,18 +1,18 @@
 import Foundation
 
 /// Manages a per-account file-based Claude login (`<configDir>/.credentials.json`)
-/// so the account is independent of the shared macOS Keychain. The app keeps
-/// the token alive by refreshing it via the OAuth refresh grant and writing the
-/// new token back to the file — this is what lets a second account stay logged
-/// in without touching the Keychain or being clobbered by Conductor.
-enum CredentialFile {
+/// so the account is independent of any shared OS keychain. The Core module keeps
+/// the token alive by refreshing it via the OAuth refresh grant and writing the new
+/// token back to the file — this is what lets a second account stay logged in
+/// without touching the OS keychain or being clobbered by another login.
+public enum CredentialFile {
     /// Claude Code's public OAuth client id + token endpoint.
-    static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-    static let tokenURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
+    public static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    public static let tokenURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
 
-    static func path(_ configDir: String) -> String { configDir + "/.credentials.json" }
+    public static func path(_ configDir: String) -> String { configDir + "/.credentials.json" }
 
-    static func exists(_ configDir: String) -> Bool {
+    public static func exists(_ configDir: String) -> Bool {
         FileManager.default.fileExists(atPath: path(configDir))
     }
 
@@ -25,7 +25,7 @@ enum CredentialFile {
 
     /// The current OAuth access token for this login, if present. Used to read
     /// usage directly from the HTTP endpoint (robust to CLI output changes).
-    static func accessToken(_ configDir: String) -> String? {
+    public static func accessToken(_ configDir: String) -> String? {
         (readOAuth(configDir)?["accessToken"] as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
@@ -33,7 +33,7 @@ enum CredentialFile {
     /// already expired). Best-effort: on any failure the existing file is kept.
     /// Returns true if a refresh was performed and written.
     @discardableResult
-    static func refreshIfNeeded(_ configDir: String, window: TimeInterval = 600) async -> Bool {
+    public static func refreshIfNeeded(_ configDir: String, window: TimeInterval = 600) async -> Bool {
         guard let data = FileManager.default.contents(atPath: path(configDir)),
               var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               var oauth = root["claudeAiOauth"] as? [String: Any],

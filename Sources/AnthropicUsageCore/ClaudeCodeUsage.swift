@@ -1,24 +1,26 @@
 import Foundation
 
-/// Reads Claude Code subscription plan limits by running the CLI's own
-/// `/usage` command non-interactively (`claude -p "/usage"`) and parsing its
-/// output. This is far more robust than calling the usage HTTP endpoint
-/// directly: the CLI owns auth + caching and isn't rate-limited by us, and
-/// there's no token for the app to store or leak.
-///
-/// Tradeoff: it reports whichever account Claude Code is currently logged in
-/// as (Claude Code holds one login at a time).
-enum ClaudeCode {
+/// Reads Claude Code subscription plan limits either by shelling out to the
+/// CLI's own `/usage` command (`claude -p "/usage"`) or, when an OAuth access
+/// token is available in the file-based login, by calling the usage HTTP
+/// endpoint directly. The CLI owns auth + caching when used; the HTTP path is
+/// robust to CLI output changes and is preferred whenever a token is on file.
+public enum ClaudeCode {
 
-    struct Window: Identifiable {
-        let id: String        // the label, used as identity
-        let label: String
-        let fraction: Double  // 0...1
-        let resetText: String?   // raw text as printed by the CLI
-        let resetAt: Date?       // parsed reset instant, for a live countdown
+    public struct Window: Identifiable, Sendable {
+        public let id: String        // the label, used as identity
+        public let label: String
+        public let fraction: Double  // 0...1
+        public let resetText: String?   // raw text as printed by the CLI
+        public let resetAt: Date?       // parsed reset instant, for a live countdown
+
+        public init(id: String, label: String, fraction: Double, resetText: String?, resetAt: Date?) {
+            self.id = id; self.label = label; self.fraction = fraction
+            self.resetText = resetText; self.resetAt = resetAt
+        }
     }
 
-    enum State {
+    public enum State: Sendable {
         case ok([Window])
         case stats(costUSD: Double)   // token/API mode: "Total cost: $X" but no limit bars
         case notLoggedIn
@@ -34,7 +36,7 @@ enum ClaudeCode {
     /// Fetch limits via the usage HTTP endpoint using a long-lived token
     /// (from `claude setup-token`). This path doesn't log out and doesn't
     /// touch Claude Code's keychain login.
-    static func fetchViaToken(_ token: String) async -> State {
+    public static func fetchViaToken(_ token: String) async -> State {
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
@@ -144,17 +146,20 @@ enum ClaudeCode {
 
     // MARK: Public
 
-    struct Identity: Equatable {
-        var email: String?
-        var orgName: String?
+    public struct Identity: Equatable, Sendable {
+        public var email: String?
+        public var orgName: String?
         /// Best label for display: email, else org name.
-        var label: String? { email ?? orgName }
+        public var label: String? { email ?? orgName }
+        public init(email: String? = nil, orgName: String? = nil) {
+            self.email = email; self.orgName = orgName
+        }
     }
 
     /// The logged-in account identity for a given auth context, via
     /// `claude auth status --json`. Same auth resolution as usage: a token
     /// wins; otherwise the config dir (nil = default ~/.claude login).
-    static func fetchIdentity(configDir: String?, token: String?) async -> Identity? {
+    public static func fetchIdentity(configDir: String?, token: String?) async -> Identity? {
         await Task.detached(priority: .utility) { blockingIdentity(configDir: configDir, token: token) }.value
     }
 
@@ -164,7 +169,7 @@ enum ClaudeCode {
         task.executableURL = URL(fileURLWithPath: bin)
         task.arguments = ["auth", "status", "--json"]
         var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        env["PATH"] = "\(homeDir())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         if let token { env["CLAUDE_CODE_OAUTH_TOKEN"] = token }
         else if let configDir { env["CLAUDE_CONFIG_DIR"] = configDir }
         task.environment = env
@@ -185,7 +190,7 @@ enum ClaudeCode {
     /// so this is how you kick the clock off on demand. Negligible usage.
     /// Returns true if the message was accepted.
     @discardableResult
-    static func primeSession(configDir: String?) async -> Bool {
+    public static func primeSession(configDir: String?) async -> Bool {
         await Task.detached(priority: .utility) { blockingPrime(configDir: configDir) }.value
     }
 
@@ -196,7 +201,7 @@ enum ClaudeCode {
         // A trivial prompt is enough to open the 5h block; keep output tiny.
         task.arguments = ["-p", "Reply with just: ok"]
         var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        env["PATH"] = "\(homeDir())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         if let configDir { env["CLAUDE_CONFIG_DIR"] = configDir }
         task.environment = env
         task.currentDirectoryURL = URL(fileURLWithPath: neutralWorkdir())
@@ -212,7 +217,7 @@ enum ClaudeCode {
     /// Fetch limits for a specific login. `configDir == nil` uses the default
     /// (`~/.claude`) — your primary Claude Code login. A path selects an
     /// independent login via `CLAUDE_CONFIG_DIR`.
-    static func fetchUsage(configDir: String? = nil) async -> State {
+    public static func fetchUsage(configDir: String? = nil) async -> State {
         await Task.detached(priority: .utility) { blockingFetch(configDir: configDir) }.value
     }
 
@@ -220,7 +225,7 @@ enum ClaudeCode {
 
     /// A stable, app-owned empty directory to run the CLI in — avoids touching
     /// the user's Documents/home (which triggers a macOS access prompt).
-    private static func neutralWorkdir() -> String {
+    static func neutralWorkdir() -> String {
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("AnthropicUsageBar/run", isDirectory: true)
@@ -228,8 +233,10 @@ enum ClaudeCode {
         return dir.path
     }
 
-    private static func resolveClaude() -> String? {
-        let home = NSHomeDirectory()
+    static func homeDir() -> String { NSHomeDirectory() }
+
+    static func resolveClaude() -> String? {
+        let home = homeDir()
         let candidates = [
             "\(home)/.local/bin/claude",
             "/opt/homebrew/bin/claude",
@@ -245,9 +252,9 @@ enum ClaudeCode {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: bin)
         task.arguments = ["-p", "/usage"]
-        // GUI apps launch with a minimal PATH; give the CLI a sane one.
+        // GUI/CLI apps launch with a minimal PATH; give the CLI a sane one.
         var env = ProcessInfo.processInfo.environment
-        env["PATH"] = "\(NSHomeDirectory())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        env["PATH"] = "\(homeDir())/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         if let configDir { env["CLAUDE_CONFIG_DIR"] = configDir }  // independent login
         task.environment = env
         // Run in a neutral empty dir so Claude Code doesn't scan the launch
@@ -290,7 +297,7 @@ enum ClaudeCode {
     /// Parse a CLI reset string like "Jul 5 at 6:09pm (America/New_York)" into
     /// an absolute Date. Best-effort: returns nil if the wording changes, in
     /// which case the UI falls back to showing the raw text.
-    static func parseReset(_ raw: String) -> Date? {
+    public static func parseReset(_ raw: String) -> Date? {
         var s = raw.trimmingCharacters(in: .whitespaces)
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = .current

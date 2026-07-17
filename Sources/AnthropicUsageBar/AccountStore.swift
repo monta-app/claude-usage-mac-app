@@ -1,10 +1,11 @@
 import Foundation
 import SwiftUI
+import AnthropicUsageCore
 
-/// Shows plan usage for multiple Claude accounts at once. Every account is
-/// file-based (its own `.credentials.json`), captured from a live login and
-/// refreshed by the app. The app never touches the macOS Keychain — so nothing
-/// mirrors, and switching Conductor/Claude Code doesn't change what's shown.
+/// SwiftUI `ObservableObject` wrapper around `AccountsManager`. Owns the
+/// refresh + auto-prime timers and the published state the menu-bar UI binds
+/// to. All persistence and account logic is delegated to `AccountsManager`
+/// (in AnthropicUsageCore) so the `ccu` CLI can reuse it verbatim.
 @MainActor
 final class AccountStore: ObservableObject {
     @Published var accounts: [ConfigAccount] = []
@@ -14,13 +15,22 @@ final class AccountStore: ObservableObject {
     @Published var isRefreshing = false
     @Published var priming: Set<UUID> = []   // accounts currently starting a session
 
-    private let key = "configAccounts.v2"
+    private let manager: AccountsManager
     private var timer: Timer?
     private var scheduleTimer: Timer?
-    private var lastPrimed: [UUID: Date] = [:]
+
+    // Legacy UserDefaults index used by the pre-Core GUI. Used once, to adopt
+    // existing installs' accounts into the new shared JSON index at
+    // ~/.claude-usage/accounts.json. Stored configDir paths are absolute, so
+    // old accounts keep working where they are; only NEW accounts go to
+    // ~/.claude-usage/cc/<uuid>.
+    private static let legacyKey = "configAccounts.v2"
+    private static let legacyKeyV1 = "configAccounts.v1"
 
     init() {
-        load()
+        manager = AccountsManager(baseDir: AccountsManager.defaultBaseDir())
+        migrateFromUserDefaultsIfNeeded()
+        accounts = manager.accounts
         timer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { await self.refresh() }
@@ -33,29 +43,27 @@ final class AccountStore: ObservableObject {
         Task { await refresh(); checkSchedules() }
     }
 
-    // MARK: Persistence (with migration from v1 default+extra model)
+    // MARK: One-time migration from the pre-Core UserDefaults index
 
-    private struct Legacy: Codable { var id: UUID; var name: String; var configDir: String? }
+    private struct LegacyAccount: Codable { var id: UUID; var name: String; var configDir: String? }
 
-    private func load() {
-        if let data = UserDefaults.standard.data(forKey: key),
-           let decoded = try? JSONDecoder().decode([ConfigAccount].self, from: data) {
-            accounts = decoded
+    private func migrateFromUserDefaultsIfNeeded() {
+        let indexURL = manager.baseDir.appendingPathComponent("accounts.json")
+        guard !FileManager.default.fileExists(atPath: indexURL.path) else { return }
+
+        if let data = UserDefaults.standard.data(forKey: Self.legacyKey),
+           let decoded = try? JSONDecoder().decode([ConfigAccount].self, from: data),
+           !decoded.isEmpty {
+            manager.replaceAll(decoded)
             return
         }
-        // Migrate v1: keep only file-based (configDir != nil) accounts.
-        if let data = UserDefaults.standard.data(forKey: "configAccounts.v1"),
-           let old = try? JSONDecoder().decode([Legacy].self, from: data) {
-            accounts = old.compactMap { l in
+        // v1 had an optional configDir (only file-based accounts were kept).
+        if let data = UserDefaults.standard.data(forKey: Self.legacyKeyV1),
+           let old = try? JSONDecoder().decode([LegacyAccount].self, from: data) {
+            let mapped = old.compactMap { l in
                 l.configDir.map { ConfigAccount(id: l.id, name: l.name, configDir: $0) }
             }
-            persist()
-        }
-    }
-
-    private func persist() {
-        if let data = try? JSONEncoder().encode(accounts) {
-            UserDefaults.standard.set(data, forKey: key)
+            if !mapped.isEmpty { manager.replaceAll(mapped) }
         }
     }
 
@@ -63,38 +71,33 @@ final class AccountStore: ObservableObject {
 
     /// Add a new account by capturing whatever you're logged into right now.
     func addCurrentLogin() {
-        let id = UUID()
-        let dir = CCLogin.newConfigDir(for: id)
-        accounts.append(ConfigAccount(id: id, name: "Account \(accounts.count + 1)", configDir: dir))
-        persist()
-        CCLogin.captureCurrent(configDir: dir)   // Terminal captures the live login into this dir
+        let name = "Account \(accounts.count + 1)"
+        let acct = manager.add(name: name)
+        accounts = manager.accounts
+        CCLogin.captureCurrent(configDir: acct.configDir)   // Terminal captures the live login into this dir
     }
 
     /// Re-capture the current live login into an existing account (if it went stale).
     func recapture(_ account: ConfigAccount) { CCLogin.captureCurrent(configDir: account.configDir) }
 
     func setSchedule(_ account: ConfigAccount, _ schedule: PrimeSchedule) {
-        guard let i = accounts.firstIndex(where: { $0.id == account.id }) else { return }
-        accounts[i].schedule = schedule
-        persist()
+        manager.setSchedule(account, schedule)
+        accounts = manager.accounts
         checkSchedules()
     }
 
     func rename(_ account: ConfigAccount, to name: String) {
-        let t = name.trimmingCharacters(in: .whitespaces)
-        guard !t.isEmpty, let i = accounts.firstIndex(where: { $0.id == account.id }) else { return }
-        accounts[i].name = t
-        persist()
+        manager.rename(account, to: name)
+        accounts = manager.accounts
     }
 
     func remove(_ account: ConfigAccount) {
-        try? FileManager.default.removeItem(atPath: account.configDir)
-        accounts.removeAll { $0.id == account.id }
+        manager.remove(account)
+        accounts = manager.accounts
         states[account.id] = nil; identities[account.id] = nil
-        persist()
     }
 
-    func hasCredential(_ account: ConfigAccount) -> Bool { CredentialFile.exists(account.configDir) }
+    func hasCredential(_ account: ConfigAccount) -> Bool { manager.hasCredential(account) }
 
     /// Kick off the 5h rolling window for this account now (one tiny message),
     /// then refresh so the new reset time / countdown shows immediately.
@@ -102,8 +105,7 @@ final class AccountStore: ObservableObject {
         guard !priming.contains(account.id) else { return }
         priming.insert(account.id)
         Task {
-            await CredentialFile.refreshIfNeeded(account.configDir)
-            _ = await ClaudeCode.primeSession(configDir: account.configDir)
+            await manager.startSession(account)
             priming.remove(account.id)
             await refresh()
         }
@@ -113,28 +115,10 @@ final class AccountStore: ObservableObject {
 
     func refresh() async {
         isRefreshing = true
-        let items = accounts
-        await withTaskGroup(of: (UUID, ClaudeCode.State, ClaudeCode.Identity?).self) { group in
-            for a in items {
-                group.addTask {
-                    await CredentialFile.refreshIfNeeded(a.configDir)   // keep token alive
-                    async let i = ClaudeCode.fetchIdentity(configDir: a.configDir, token: nil)
-                    // Prefer the HTTP usage endpoint (structured JSON, robust to
-                    // CLI changes); fall back to `claude -p /usage` only if the
-                    // credential file has no access token.
-                    let state: ClaudeCode.State
-                    if let token = CredentialFile.accessToken(a.configDir) {
-                        state = await ClaudeCode.fetchViaToken(token)
-                    } else {
-                        state = await ClaudeCode.fetchUsage(configDir: a.configDir)
-                    }
-                    return (a.id, state, await i)
-                }
-            }
-            for await (id, state, ident) in group {
-                states[id] = state
-                if let ident { identities[id] = ident }
-            }
+        let results = await manager.refreshAll()
+        for (id, r) in results {
+            states[id] = r.state
+            if let ident = r.identity { identities[id] = ident }
         }
         lastUpdated = Date()
         isRefreshing = false
@@ -143,53 +127,21 @@ final class AccountStore: ObservableObject {
 
     // MARK: Auto-prime scheduling
 
-    /// The 5h "current session" window for an account, if present.
-    func sessionWindow(of id: UUID) -> ClaudeCode.Window? {
-        guard case .ok(let ws)? = states[id] else { return nil }
-        return ws.first { $0.id == "five_hour" || $0.label.lowercased().contains("session") }
-    }
-
-    /// True if a 5h block is currently running (has a future reset, or shows usage).
-    private func sessionActive(_ id: UUID, now: Date) -> Bool {
-        guard let w = sessionWindow(of: id) else { return false }
-        if let r = w.resetAt, r > now { return true }
-        return w.fraction > 0.02   // used but no parsed reset → still treat as active
-    }
-
     /// Called every minute: within each enabled account's active window, if no
     /// 5h block is running and we didn't just prime, start one.
     func checkSchedules() {
-        let now = Date()
-        let cal = Calendar.current
-        for a in accounts {
-            guard let s = a.schedule, s.enabled, hasCredential(a) else { continue }
-            if priming.contains(a.id) { continue }
-            if s.weekdaysOnly {
-                let wd = cal.component(.weekday, from: now)   // 1=Sun … 7=Sat
-                if wd == 1 || wd == 7 { continue }
-            }
-            let dayStart = cal.startOfDay(for: now)
-            let activeStart = dayStart.addingTimeInterval(Double(s.startMinutes) * 60)
-            let activeEnd = activeStart.addingTimeInterval(Double(s.windowHours) * 3600)
-            guard now >= activeStart, now <= activeEnd else { continue }
-            if sessionActive(a.id, now: now) { continue }
-            if let last = lastPrimed[a.id], now.timeIntervalSince(last) < 300 { continue }
-            lastPrimed[a.id] = now
-            startSession(a)
+        Task {
+            _ = await manager.checkSchedules(states: states)
+            // Schedules may have started a session; refresh so it shows up.
+            await refresh()
         }
     }
 
     // MARK: Derived
 
-    func peak(of id: UUID) -> Double? {
-        if case .ok(let w)? = states[id] { return w.map(\.fraction).max() }
-        return nil
-    }
+    func peak(of id: UUID) -> Double? { manager.peak(of: id, states: states) }
 
-    func title(for account: ConfigAccount) -> String {
-        if let org = identities[account.id]?.orgName, !org.isEmpty { return org }
-        return account.name
-    }
+    func title(for account: ConfigAccount) -> String { manager.title(for: account, identities: identities) }
 
     var menuBarTitle: String {
         var parts: [String] = []
