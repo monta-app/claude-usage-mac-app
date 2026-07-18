@@ -9,6 +9,11 @@ struct MenuContentView: View {
     @StateObject private var notifier = Notifier.shared
     @StateObject private var updater = UpdateChecker.shared
 
+    /// Short local time ("2:47 PM") for the stale "as of" stamp.
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter(); f.timeStyle = .short; f.dateStyle = .none; return f
+    }()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
@@ -131,6 +136,15 @@ struct MenuContentView: View {
                     }
                 }
                 Spacer()
+                if store.staleAccounts.contains(acct.id) {
+                    Text("STALE")
+                        .font(.system(size: 8, weight: .bold)).kerning(0.5)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Color.orange.opacity(0.18))
+                        .foregroundStyle(.orange)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                        .help("Couldn’t refresh (throttled) — showing the last good reading.")
+                }
                 if let p = store.peak(of: acct.id) {
                     Text("\(Int((p * 100).rounded()))%")
                         .font(.caption.weight(.semibold).monospacedDigit())
@@ -138,6 +152,10 @@ struct MenuContentView: View {
                 }
             }
             planBlock(state: store.states[acct.id] ?? .loading)
+            if store.staleAccounts.contains(acct.id), let at = store.capturedAt[acct.id] {
+                Label("as of \(Self.timeFormatter.string(from: at))", systemImage: "clock.arrow.circlepath")
+                    .font(.caption2).foregroundStyle(.orange.opacity(0.9))
+            }
             if store.hasCredential(acct) {
                 sessionControls(acct)
             }
@@ -193,7 +211,7 @@ struct MenuContentView: View {
             Label("Login expired — log in again in Manage…", systemImage: "clock.arrow.circlepath")
                 .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
         case .rateLimited:
-            Label("Throttled — will retry.", systemImage: "hourglass").font(.caption).foregroundStyle(.secondary)
+            Label("Throttled — will retry.", systemImage: "gauge.medium").font(.caption).foregroundStyle(.secondary)
         case .stats:
             Text("No plan limits for this login.").font(.caption).foregroundStyle(.secondary)
         case .error(let m):

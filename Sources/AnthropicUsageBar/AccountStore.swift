@@ -18,6 +18,12 @@ final class AccountStore: ObservableObject {
     /// default `~/.claude` login's identity). nil = couldn't match / not one
     /// of the tracked accounts.
     @Published var activeAccountID: UUID?
+    /// Accounts whose displayed `.ok` reading is stale — a later refresh hit a
+    /// transient failure (429 / network) so we're showing the last good data.
+    @Published var staleAccounts: Set<UUID> = []
+    /// When each account's currently-displayed usage was actually fetched.
+    /// Preserved through stale periods so the UI can show "as of <time>".
+    @Published var capturedAt: [UUID: Date] = [:]
 
     private let manager: AccountsManager
     private var timer: Timer?
@@ -120,9 +126,21 @@ final class AccountStore: ObservableObject {
     func refresh() async {
         isRefreshing = true
         let results = await manager.refreshAll()
+        let now = Date()
         for (id, r) in results {
-            states[id] = r.state
             if let ident = r.identity { identities[id] = ident }
+            // A transient failure (throttle / network error) after we already
+            // had good numbers shouldn't blank the account — keep showing the
+            // last good reading, mark it stale, and keep its capture time so the
+            // UI can say how old it is. Real state changes (logged out, expired,
+            // CLI gone) DO replace it — those aren't stale data, they're news.
+            if isTransientFailure(r.state), case .ok = states[id] {
+                staleAccounts.insert(id)
+            } else {
+                states[id] = r.state
+                staleAccounts.remove(id)
+                if hasUsableData(r.state) { capturedAt[id] = now }
+            }
         }
         // Which tracked account is Claude Code currently logged into? Match the
         // default (~/.claude) login's identity to a tracked account. Email alone
@@ -146,6 +164,23 @@ final class AccountStore: ObservableObject {
         isRefreshing = false
         Notifier.shared.evaluate(accounts: accounts, states: states) { self.title(for: $0) }
         Notifier.shared.evaluateMove(recommendation, accounts: accounts) { self.title(for: $0) }
+    }
+
+    /// A throttle or transient network error — not a real change in the account,
+    /// just a failed poll. Worth riding out on the last good reading.
+    private func isTransientFailure(_ s: ClaudeCode.State) -> Bool {
+        switch s {
+        case .rateLimited, .error: return true
+        default: return false
+        }
+    }
+
+    /// Does this state carry real usage we'd want to timestamp and keep?
+    private func hasUsableData(_ s: ClaudeCode.State) -> Bool {
+        switch s {
+        case .ok, .stats: return true
+        default: return false
+        }
     }
 
     // MARK: Recommendation ("what should I move to?")
@@ -192,7 +227,7 @@ final class AccountStore: ObservableObject {
         var text: String
         if !parts.isEmpty { text = (maxed ? "⚠︎ " : "") + parts.joined(separator: " · ") }
         else if accounts.isEmpty { return "Claude" }
-        else { return "…" }
+        else { return fallbackTitle }
 
         // Append a compact "move to" hint so the suggestion is visible without
         // opening the menu. Arrow style signals urgency: ⇥ = must move, → = nudge.
@@ -202,5 +237,32 @@ final class AccountStore: ObservableObject {
             text += "  \(arrow) \(title(for: target))"
         }
         return text
+    }
+
+    /// What to show in the menu bar when no account has usable usage numbers.
+    /// Rather than a bare "…" (which reads as "still loading" forever), reflect
+    /// the dominant reason so a glance tells you *why* there's no number:
+    /// throttled, logged out, expired, or genuinely still loading.
+    private var fallbackTitle: String {
+        // Still fetching for the first time → the honest "working on it".
+        if isRefreshing && states.values.allSatisfy({ if case .loading = $0 { return true } else { return false } }) {
+            return "…"
+        }
+        var throttled = false, expired = false, loggedOut = false, loading = false
+        for a in accounts {
+            switch states[a.id] {
+            case .rateLimited: throttled = true
+            case .expired:     expired = true
+            case .notLoggedIn: loggedOut = true
+            case .loading, nil: loading = true
+            default: break
+            }
+        }
+        // Order by how actionable the state is for the user.
+        if throttled { return "◴ limited" }    // transient — will retry on its own
+        if expired   { return "⚠︎ log in" }    // needs re-auth
+        if loggedOut { return "log in" }
+        if loading   { return "…" }
+        return "—"                              // stats-only / errors: nothing to show
     }
 }
