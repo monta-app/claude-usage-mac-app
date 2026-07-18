@@ -32,17 +32,23 @@ public enum CredentialFile {
     /// Refresh the file's token if it's within `window` seconds of expiry (or
     /// already expired). Best-effort: on any failure the existing file is kept.
     /// Returns true if a refresh was performed and written.
+    ///
+    /// `force` rotates the token regardless of expiry. The usage endpoint
+    /// rate-limits per access token, and a fresh token clears that 429 — so a
+    /// forced rotation is how a throttled-but-not-expired login recovers.
     @discardableResult
-    public static func refreshIfNeeded(_ configDir: String, window: TimeInterval = 600) async -> Bool {
+    public static func refreshIfNeeded(_ configDir: String, window: TimeInterval = 600, force: Bool = false) async -> Bool {
         guard let data = FileManager.default.contents(atPath: path(configDir)),
               var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               var oauth = root["claudeAiOauth"] as? [String: Any],
               let refresh = oauth["refreshToken"] as? String, !refresh.isEmpty
         else { return false }
 
-        let expMs = (oauth["expiresAt"] as? Double) ?? Double((oauth["expiresAt"] as? Int) ?? 0)
-        let expiresAt = expMs / 1000.0
-        if expiresAt - Date().timeIntervalSince1970 > window { return false }   // still fresh
+        if !force {
+            let expMs = (oauth["expiresAt"] as? Double) ?? Double((oauth["expiresAt"] as? Int) ?? 0)
+            let expiresAt = expMs / 1000.0
+            if expiresAt - Date().timeIntervalSince1970 > window { return false }   // still fresh
+        }
 
         var req = URLRequest(url: tokenURL)
         req.httpMethod = "POST"

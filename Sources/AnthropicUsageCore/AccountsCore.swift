@@ -184,9 +184,17 @@ public final class AccountsManager {
     private static func refreshOne(_ a: ConfigAccount) async -> RefreshResult {
         await CredentialFile.refreshIfNeeded(a.configDir)
         async let ident = ClaudeCode.fetchIdentity(configDir: a.configDir, token: nil)
-        let state: ClaudeCode.State
+        var state: ClaudeCode.State
         if let token = CredentialFile.accessToken(a.configDir) {
             state = await ClaudeCode.fetchViaToken(token)
+            // The usage endpoint rate-limits per access token. A 429 on a
+            // still-valid token clears if we rotate it — so force a refresh and
+            // retry once with the fresh token before giving up as throttled.
+            if case .rateLimited = state,
+               await CredentialFile.refreshIfNeeded(a.configDir, force: true),
+               let fresh = CredentialFile.accessToken(a.configDir) {
+                state = await ClaudeCode.fetchViaToken(fresh)
+            }
         } else {
             state = await ClaudeCode.fetchUsage(configDir: a.configDir)
         }

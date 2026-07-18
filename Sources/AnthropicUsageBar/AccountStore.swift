@@ -29,6 +29,14 @@ final class AccountStore: ObservableObject {
     private var timer: Timer?
     private var scheduleTimer: Timer?
 
+    // Per-account 429 backoff: how many consecutive throttles, and the earliest
+    // time we're allowed to poll that account again. Cleared on any success.
+    private var backoffLevel: [UUID: Int] = [:]
+    private var backoffUntil: [UUID: Date] = [:]
+    private static let baseBackoff: TimeInterval = 5 * 60   // 5m → 10 → 20 → 40 …
+    private static let maxBackoff: TimeInterval = 60 * 60    // cap at 1h
+    private static let staggerDelay: TimeInterval = 8        // gap between account fetches
+
     // Legacy UserDefaults index used by the pre-Core GUI. Used once, to adopt
     // existing installs' accounts into the new shared JSON index at
     // ~/.claude-usage/accounts.json. Stored configDir paths are absolute, so
@@ -125,18 +133,49 @@ final class AccountStore: ObservableObject {
 
     func refresh() async {
         isRefreshing = true
-        let results = await manager.refreshAll()
         let now = Date()
-        for (id, r) in results {
+
+        // The usage endpoint rate-limits bursts of same-subscription requests,
+        // and gives no Retry-After. So: fetch accounts one at a time with a
+        // small gap (never burst), and once it 429s this cycle, stop poking it —
+        // the limit is shared across these logins, so more requests only dig the
+        // hole deeper. Accounts we skip keep their last good reading (stale).
+        // Poll the account you're actually on FIRST, so if the endpoint throttles
+        // mid-cycle the authed seat still got its one shot at fresh data.
+        var ordered = accounts
+        if let ai = activeAccountID, let idx = ordered.firstIndex(where: { $0.id == ai }) {
+            ordered.insert(ordered.remove(at: idx), at: 0)
+        }
+
+        var endpointThrottled = false
+        var didFetch = false
+        for account in ordered {
+            let id = account.id
+
+            // Still cooling down from an earlier 429, or we already got throttled
+            // this cycle → don't fetch; nurse the last good reading along.
+            if endpointThrottled || (backoffUntil[id].map { $0 > now } ?? false) {
+                if case .ok = states[id] { staleAccounts.insert(id) }
+                continue
+            }
+
+            if didFetch { try? await Task.sleep(nanoseconds: UInt64(Self.staggerDelay * 1_000_000_000)) }
+            didFetch = true
+            let r = await manager.refresh(account)
             if let ident = r.identity { identities[id] = ident }
-            // A transient failure (throttle / network error) after we already
-            // had good numbers shouldn't blank the account — keep showing the
-            // last good reading, mark it stale, and keep its capture time so the
-            // UI can say how old it is. Real state changes (logged out, expired,
-            // CLI gone) DO replace it — those aren't stale data, they're news.
-            if isTransientFailure(r.state), case .ok = states[id] {
-                staleAccounts.insert(id)
+
+            if isTransientFailure(r.state) {
+                if case .rateLimited = r.state { endpointThrottled = true }
+                // Exponential backoff per account (no Retry-After to honor).
+                let level = (backoffLevel[id] ?? 0) + 1
+                backoffLevel[id] = level
+                let delay = min(Self.baseBackoff * pow(2, Double(level - 1)), Self.maxBackoff)
+                backoffUntil[id] = now.addingTimeInterval(delay)
+                // Keep the last good reading if we have one; else surface the state.
+                if case .ok = states[id] { staleAccounts.insert(id) } else { states[id] = r.state }
             } else {
+                backoffLevel[id] = nil
+                backoffUntil[id] = nil
                 states[id] = r.state
                 staleAccounts.remove(id)
                 if hasUsableData(r.state) { capturedAt[id] = now }
@@ -147,7 +186,7 @@ final class AccountStore: ObservableObject {
         // is NOT unique (several orgs can share one email), so match on the
         // (email, org) pair — falling back to a unique email match only when the
         // active login carries no org.
-        activeAccountID = await ClaudeCode.fetchIdentity(configDir: nil, token: nil).flatMap { active in
+        let matchedActive = await ClaudeCode.fetchIdentity(configDir: nil, token: nil).flatMap { active in
             func eq(_ a: String?, _ b: String?) -> Bool {
                 guard let a, let b else { return a == nil && b == nil }
                 return a.caseInsensitiveCompare(b) == .orderedSame
@@ -159,6 +198,15 @@ final class AccountStore: ObservableObject {
             guard active.orgName == nil, let email = active.email else { return nil }
             let byEmail = accounts.filter { eq(identities[$0.id]?.email, email) }
             return byEmail.count == 1 ? byEmail[0].id : nil
+        }
+        // Sticky: only update when we got a positive match. A failed/timed-out
+        // identity poll returns nil — don't blank a known-good active account
+        // over one hiccup, or the "YOU'RE HERE" badge and the move suggestion
+        // would flicker out every time the CLI call stumbles. Clears only if the
+        // matched account is no longer tracked.
+        if let matchedActive { activeAccountID = matchedActive }
+        else if let current = activeAccountID, !accounts.contains(where: { $0.id == current }) {
+            activeAccountID = nil
         }
         lastUpdated = Date()
         isRefreshing = false
