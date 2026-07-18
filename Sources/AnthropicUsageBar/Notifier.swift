@@ -66,6 +66,25 @@ final class Notifier: ObservableObject {
         }
     }
 
+    /// The move we last popped for, so a standing "must move to X" doesn't
+    /// re-alert every refresh. Re-arms when the target changes or advice clears.
+    private var lastMovePopup: UUID?
+
+    /// Fire the loud "you must switch accounts" popup — but ONLY for a
+    /// `.mustMove` (you've actually hit a wall). Quiet `.suggestion`s live in
+    /// the menu bar and never pop. Edge-triggered on the target account.
+    func evaluateMove(_ move: Recommender.Move?, accounts: [ConfigAccount], title: (ConfigAccount) -> String) {
+        guard isEnabled, let move, move.urgency == .mustMove,
+              let target = accounts.first(where: { $0.id == move.targetID }) else {
+            lastMovePopup = nil
+            return
+        }
+        guard lastMovePopup != move.targetID else { return }
+        lastMovePopup = move.targetID
+        alert(title: "Claude Usage",
+              body: "The account you're on \(move.reason).\n\nSwitch to \(title(target)) — it has headroom.")
+    }
+
     // MARK: Delivery
 
     /// Sticky alert: a dialog that stays on screen until the user dismisses it,

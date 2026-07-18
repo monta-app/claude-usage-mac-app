@@ -14,6 +14,10 @@ final class AccountStore: ObservableObject {
     @Published var lastUpdated: Date?
     @Published var isRefreshing = false
     @Published var priming: Set<UUID> = []   // accounts currently starting a session
+    /// The account Claude Code is currently logged into (matched from the
+    /// default `~/.claude` login's identity). nil = couldn't match / not one
+    /// of the tracked accounts.
+    @Published var activeAccountID: UUID?
 
     private let manager: AccountsManager
     private var timer: Timer?
@@ -120,9 +124,42 @@ final class AccountStore: ObservableObject {
             states[id] = r.state
             if let ident = r.identity { identities[id] = ident }
         }
+        // Which tracked account is Claude Code currently logged into? Match the
+        // default (~/.claude) login's identity to a tracked account. Email alone
+        // is NOT unique (several orgs can share one email), so match on the
+        // (email, org) pair — falling back to a unique email match only when the
+        // active login carries no org.
+        activeAccountID = await ClaudeCode.fetchIdentity(configDir: nil, token: nil).flatMap { active in
+            func eq(_ a: String?, _ b: String?) -> Bool {
+                guard let a, let b else { return a == nil && b == nil }
+                return a.caseInsensitiveCompare(b) == .orderedSame
+            }
+            let full = accounts.first {
+                eq(identities[$0.id]?.email, active.email) && eq(identities[$0.id]?.orgName, active.orgName)
+            }
+            if let full { return full.id }
+            guard active.orgName == nil, let email = active.email else { return nil }
+            let byEmail = accounts.filter { eq(identities[$0.id]?.email, email) }
+            return byEmail.count == 1 ? byEmail[0].id : nil
+        }
         lastUpdated = Date()
         isRefreshing = false
         Notifier.shared.evaluate(accounts: accounts, states: states) { self.title(for: $0) }
+        Notifier.shared.evaluateMove(recommendation, accounts: accounts) { self.title(for: $0) }
+    }
+
+    // MARK: Recommendation ("what should I move to?")
+
+    /// The current move advice, or nil when the seat you're on is fine (or we
+    /// can't tell which seat you're on). Recomputed from live state on demand.
+    var recommendation: Recommender.Move? {
+        var usages: [UUID: Recommender.Usage] = [:]
+        for a in accounts {
+            if case .ok(let windows)? = states[a.id] {
+                usages[a.id] = Recommender.usage(from: windows)
+            }
+        }
+        return Recommender.recommend(usages: usages, activeID: activeAccountID)
     }
 
     // MARK: Auto-prime scheduling
@@ -152,8 +189,18 @@ final class AccountStore: ObservableObject {
                 parts.append("\(Int((p * 100).rounded()))%")
             }
         }
-        if !parts.isEmpty { return (maxed ? "⚠︎ " : "") + parts.joined(separator: " · ") }
-        if accounts.isEmpty { return "Claude" }
-        return "…"
+        var text: String
+        if !parts.isEmpty { text = (maxed ? "⚠︎ " : "") + parts.joined(separator: " · ") }
+        else if accounts.isEmpty { return "Claude" }
+        else { return "…" }
+
+        // Append a compact "move to" hint so the suggestion is visible without
+        // opening the menu. Arrow style signals urgency: ⇥ = must move, → = nudge.
+        if let move = recommendation,
+           let target = accounts.first(where: { $0.id == move.targetID }) {
+            let arrow = move.urgency == .mustMove ? "⇥" : "→"
+            text += "  \(arrow) \(title(for: target))"
+        }
+        return text
     }
 }

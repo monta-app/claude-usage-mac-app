@@ -33,6 +33,12 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/ccu"
+        ),
+        // Unit tests for the pure Core logic (recommender, etc.).
+        .testTarget(
+            name: "AnthropicUsageCoreTests",
+            dependencies: ["AnthropicUsageCore"],
+            path: "Tests/AnthropicUsageCoreTests"
         )
     ]
 )

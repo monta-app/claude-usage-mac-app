@@ -12,6 +12,11 @@ struct MenuContentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if let move = store.recommendation,
+               let target = store.accounts.first(where: { $0.id == move.targetID }) {
+                Divider()
+                moveBanner(move, target: target)
+            }
             Divider()
             if store.accounts.isEmpty {
                 Text("No accounts yet — open Manage… and click “Add current login”.")
@@ -61,6 +66,29 @@ struct MenuContentView: View {
         .padding(.bottom, 8)
     }
 
+    /// Top-of-menu advice on which account to code on next. Red for a hard wall
+    /// you've already hit (must move), orange for a proactive nudge.
+    @ViewBuilder
+    private func moveBanner(_ move: Recommender.Move, target: ConfigAccount) -> some View {
+        let mustMove = move.urgency == .mustMove
+        let tint: Color = mustMove ? .red : .orange
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: mustMove ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.right.circle")
+                .foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(mustMove ? "Move to \(store.title(for: target))" : "Consider \(store.title(for: target))")
+                    .font(.caption.weight(.semibold))
+                Text(mustMove ? "This account \(move.reason)." : "This account’s \(move.reason).")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(tint.opacity(0.10))
+    }
+
     private var header: some View {
         HStack {
             if let icon = NSImage(named: "AppIcon") {
@@ -87,7 +115,17 @@ struct MenuContentView: View {
                 Image(systemName: "person.crop.circle.fill")
                     .font(.caption).foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(store.title(for: acct)).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    HStack(spacing: 5) {
+                        Text(store.title(for: acct)).font(.subheadline.weight(.semibold)).lineLimit(1)
+                        if store.activeAccountID == acct.id {
+                            Text("YOU’RE HERE")
+                                .font(.system(size: 8, weight: .bold)).kerning(0.5)
+                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                .background(Color.accentColor.opacity(0.18))
+                                .foregroundStyle(Color.accentColor)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
                     if let email = store.identities[acct.id]?.email, !email.isEmpty {
                         Text(email).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                     }
